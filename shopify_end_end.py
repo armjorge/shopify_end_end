@@ -5,7 +5,7 @@ import yaml
 from dotenv import load_dotenv
 from colorama import Fore, Style, init
 from Library.yaml_creator import YAMLCREATOR
-
+from Library.shopify_inventory import SHOPIFY_ZOHO
 
 class SHOPIFY:
     def __init__(self):
@@ -13,13 +13,13 @@ class SHOPIFY:
         self.working_folder = os.path.join(self.folder_root, "Shopify_files")  
         os.makedirs(self.working_folder, exist_ok=True)
         self.data_yaml = YAMLCREATOR(self.working_folder).data
-
+        self.shopify_zoho = SHOPIFY_ZOHO(self.working_folder, self.data_yaml)
 
     def run(self):
         init(autoreset=True)
         print(f"{Fore.RED}Shopify-Zoho Integration{Style.RESET_ALL}")
-        print(f"{os.path.basename(self.working_folder)}")
-        print(self.data_yaml['user'])
+        self.shopify_zoho.shopify_zoho_integration()
+        
 
     def get_root_path(self):
         # Get the directory where main.py lives (repo folder)
