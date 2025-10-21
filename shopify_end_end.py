@@ -6,6 +6,9 @@ from dotenv import load_dotenv
 from colorama import Fore, Style, init
 from Library.yaml_creator import YAMLCREATOR
 from Library.shopify_inventory import SHOPIFY_ZOHO
+from Library.api_zoho import ZohoAPI
+from Library.api_shopify import ShopifyAPI
+
 
 class SHOPIFY:
     def __init__(self):
@@ -14,6 +17,17 @@ class SHOPIFY:
         os.makedirs(self.working_folder, exist_ok=True)
         self.data_yaml = YAMLCREATOR(self.working_folder).data
         self.shopify_zoho = SHOPIFY_ZOHO(self.working_folder, self.data_yaml)
+        self.zoho = ZohoAPI(self.data_yaml)
+        self.shopify = ShopifyAPI(self.data_yaml)
+
+    def sync_inventory(self):
+        items = self.zoho.get_items()['items']
+        for item in items:
+            sku = item['sku']
+            stock = item['available_stock']
+            # Aquí deberás mapear SKU ↔ inventory_item_id + location_id (desde Shopify)
+            print(f"Updating {sku}: {stock} units available.")
+            # self.shopify.update_inventory(inventory_item_id, location_id, stock)
 
     def run(self):
         init(autoreset=True)
