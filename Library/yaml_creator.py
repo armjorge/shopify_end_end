@@ -14,8 +14,29 @@ class YAMLCREATOR:
         yaml_exists = os.path.exists(output_yaml)
 
         yaml_content = """
-user: add the user here
-pass: add the pass here
+shopify:
+  store_name: ".myshopify.com"
+  api_version: "2024-10"
+  access_token: "shpat_"  # Admin API token (⚠️ mantener privado)
+  endpoints:
+    products: "/admin/api/2024-10/products.json"
+    inventory_levels: "/admin/api/2024-10/inventory_levels.json"
+    orders: "/admin/api/2024-10/orders.json?status=any"
+    locations: "/admin/api/2024-10/locations.json"
+  headers:
+    Content-Type: "application/json"
+    X-Shopify-Access-Token: "${shopify.access_token}"
+
+zoho:
+  client_id: "100"
+  client_secret: "8790"
+  refresh_token: "1000..."
+  api_domain: "https://www.zohoapis.com"
+  access_token: "1000.."
+  organization_id: "65"
+  scope: "ZohoInventory.FullAccess.all"
+
+
 """
         expected_data = yaml.safe_load(yaml_content)
         expected_keys = set(expected_data.keys())

@@ -5,34 +5,33 @@ import yaml
 from dotenv import load_dotenv
 from colorama import Fore, Style, init
 from Library.yaml_creator import YAMLCREATOR
-from Library.shopify_inventory import SHOPIFY_ZOHO
-from Library.api_zoho import ZohoAPI
-from Library.api_shopify import ShopifyAPI
+from Library.zoho_inventory import ZOHO_INVENTORY
+from pprint import pprint
 
 
 class SHOPIFY:
+    # Initialize the main components
     def __init__(self):
         self.folder_root = self.get_root_path()
         self.working_folder = os.path.join(self.folder_root, "Shopify_files")  
         os.makedirs(self.working_folder, exist_ok=True)
         self.data_yaml = YAMLCREATOR(self.working_folder).data
-        self.shopify_zoho = SHOPIFY_ZOHO(self.working_folder, self.data_yaml)
-        self.zoho = ZohoAPI(self.data_yaml)
-        self.shopify = ShopifyAPI(self.data_yaml)
 
-    def sync_inventory(self):
-        items = self.zoho.get_items()['items']
-        for item in items:
-            sku = item['sku']
-            stock = item['available_stock']
-            # Aquí deberás mapear SKU ↔ inventory_item_id + location_id (desde Shopify)
-            print(f"Updating {sku}: {stock} units available.")
-            # self.shopify.update_inventory(inventory_item_id, location_id, stock)
+        # Initialize Sprint 1.1: Get product list
+        self.zoho_inventory = ZOHO_INVENTORY(self.working_folder, self.data_yaml)
 
+    # Orchstrate the main flow
     def run(self):
         init(autoreset=True)
         print(f"{Fore.RED}Shopify-Zoho Integration{Style.RESET_ALL}")
-        self.shopify_zoho.shopify_zoho_integration()
+        # Get the inventory levels from zoho. 
+        active_items = self.zoho_inventory.get_zoho_items()
+        print("Muestra de los primeros 10 items activos:")
+        for item in active_items[:10]:
+            pprint(item)
+        # Create items if no exists in shopify 
+
+        # Update stock levels in shopify
         
 
     def get_root_path(self):
