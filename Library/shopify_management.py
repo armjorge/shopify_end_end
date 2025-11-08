@@ -30,20 +30,30 @@ class SHOPIFY_MANAGEMENT:
         with open(self.log_file, "a") as f:
             f.write(json.dumps(log_entry) + "\n")
 
-    # =====================================================
-    # 1️⃣ Obtener productos existentes de Shopify
-    # =====================================================
-    def get_shopify_products(self, limit=250, verbose=True):
+    def _fetch_paginated_resource(
+        self,
+        *,
+        endpoint_key,
+        limit,
+        verbose,
+        root_key,
+        snapshot_filename,
+        resource_plural,
+        success_icon,
+        extra_params=None
+    ):
         """
-        Obtiene todos los productos de Shopify con paginación automática.
-        Optimizado con timeout y control de rate limit.
+        Fetches a paginated Shopify collection and persists a raw snapshot.
         """
         if verbose:
-            print(Fore.YELLOW + "Fetching all products from Shopify...")
+            print(Fore.YELLOW + f"Fetching all {resource_plural} from Shopify...")
 
-        endpoint = f"{self.base_url}{self.shopify_conf['endpoints']['products']}"
+        endpoint = f"{self.base_url}{self.shopify_conf['endpoints'][endpoint_key]}"
         params = {"limit": limit}
-        products = []
+        if extra_params:
+            params.update(extra_params)
+
+        items = []
         total_requests = 0
         start_time = time.time()
 
@@ -52,18 +62,17 @@ class SHOPIFY_MANAGEMENT:
             try:
                 response = requests.get(endpoint, headers=self.headers, params=params, timeout=(5, 15))
             except requests.Timeout:
-                print(Fore.RED + "⚠️ Timeout en la petición a Shopify.")
+                print(Fore.RED + f"⚠️ Timeout en la petición de Shopify ({resource_plural}).")
                 break
 
             if response.status_code != 200:
-                print(Fore.RED + f"⚠️ Error fetching products: {response.status_code}")
+                print(Fore.RED + f"⚠️ Error fetching {resource_plural}: {response.status_code}")
                 print(response.text)
                 break
 
             data = response.json()
-            products.extend(data.get("products", []))
+            items.extend(data.get(root_key, []))
 
-            # Manejo de rate limit: pausar si Shopify se acerca al límite
             if "X-Shopify-Shop-Api-Call-Limit" in response.headers:
                 used, limit_calls = map(int, response.headers["X-Shopify-Shop-Api-Call-Limit"].split("/"))
                 if used > limit_calls * 0.8:
@@ -71,7 +80,6 @@ class SHOPIFY_MANAGEMENT:
                         print(Fore.YELLOW + f"⚠️ Rate limit {used}/{limit_calls}, esperando 2s...")
                     time.sleep(2)
 
-            # Paginación
             next_link = None
             if "Link" in response.headers:
                 for link in response.headers["Link"].split(","):
@@ -80,21 +88,59 @@ class SHOPIFY_MANAGEMENT:
                         break
             endpoint = next_link
 
-            # Espera mínima (solo si hay próxima página)
             if endpoint:
                 time.sleep(0.1)
 
         elapsed = time.time() - start_time
-        print(Fore.GREEN + f"🛍️ {len(products)} productos obtenidos en {total_requests} llamadas ({elapsed:.2f}s)")
+        print(Fore.GREEN + f"{success_icon} {len(items)} {resource_plural} obtenidos en {total_requests} llamadas ({elapsed:.2f}s)")
 
-        # Snapshot rápido (sin sangría para reducir I/O)
-        snapshot_path = os.path.join(self.working_folder, "shopify_products_raw.json")
+        snapshot_path = os.path.join(self.working_folder, snapshot_filename)
         with open(snapshot_path, "w", encoding="utf-8") as f:
-            json.dump(products, f, ensure_ascii=False)
+            json.dump(items, f, ensure_ascii=False)
         if verbose:
             print(Fore.CYAN + f"📦 Snapshot guardado en {snapshot_path}")
 
+        return items
+
+    # =====================================================
+    # 1️⃣ Obtener productos existentes de Shopify
+    # =====================================================
+    def get_shopify_products(self, limit=250, verbose=True):
+        """
+        Obtiene todos los productos de Shopify con paginación automática.
+        Optimizado con timeout y control de rate limit.
+        """
+        products = self._fetch_paginated_resource(
+            endpoint_key="products",
+            limit=limit,
+            verbose=verbose,
+            root_key="products",
+            snapshot_filename="shopify_products_raw.json",
+            resource_plural="productos",
+            success_icon="🛍️"
+        )
         return products
+
+    def get_shopify_orders(self, limit=250, verbose=True, extra_params=None):
+        """
+        Obtiene todas las órdenes (ventas) con paginación automática.
+        Puedes pasar filtros adicionales en extra_params (por ejemplo status, created_at_min).
+        """
+        if extra_params is not None and not isinstance(extra_params, dict):
+            raise ValueError("extra_params debe ser un dict con los parámetros esperados por Shopify.")
+
+        orders = self._fetch_paginated_resource(
+            endpoint_key="orders",
+            limit=limit,
+            verbose=verbose,
+            root_key="orders",
+            snapshot_filename="shopify_orders_raw.json",
+            resource_plural="ordenes",
+            success_icon="🧾",
+            extra_params=extra_params
+        )
+        pprint(orders)
+        return orders
 
     # =====================================================
     # 2️⃣ Crear nuevos productos si no existen (estandarizado)

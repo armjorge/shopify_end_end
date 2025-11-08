@@ -1,10 +1,10 @@
 import os
 import yaml
-from colorama import Fore, init
+from colorama import Fore, init, Style
 
 class YAMLCREATOR:
     def __init__(self, working_folder):
-        print(Fore.BLUE + "Inicializando YAMLCREATOR")
+        print(Fore.BLUE + "Inicializando YAMLCREATOR" + Style.RESET_ALL)
         self.working_folder = working_folder
         self.yaml_path = os.path.join(working_folder, "config.yml")
         self.data = self.yaml_creation(working_folder)

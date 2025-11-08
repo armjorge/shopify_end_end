@@ -1,21 +1,27 @@
-from colorama import Fore, init
+from colorama import Fore, init, Style
 import requests
 import json
 import yaml
 import os
+from pprint import pprint
+
 
 
 class ZOHO_INVENTORY:
-    def __init__(self, working_folder, yaml_data):
-        print(Fore.BLUE + "Inicializando ZOHO_INVENTORY")
+    def __init__(self, working_folder, yaml_data, store):
+        init(autoreset=True)
+
+        print(Fore.BLUE + "Inicializando ZOHO_INVENTORY"+ Style.RESET_ALL)
         self.working_folder = working_folder
         self.data = yaml_data
         self.yaml_path = os.path.join(self.working_folder, "config.yml")
+        self.store = store
 
     def get_zoho_items(self, page=1, per_page=200):
         """
         Obtiene items del inventario de Zoho y devuelve una lista de dicts limpios.
-        """ 
+        """   
+        
         zoho_conf = self.data['zoho']
         url = f"{zoho_conf['api_domain']}/inventory/v1/items"
         
@@ -84,7 +90,82 @@ class ZOHO_INVENTORY:
 
         print(f"✅ {len(data_filtered)} items activos después del filtrado")
         return data_filtered
-    
+
+    def get_zoho_orders(self, page=1, per_page=200):
+        """
+        Obtiene órdenes de venta desde Zoho Inventory y devuelve una lista de dicts limpios.
+        """ 
+        print(f"{Fore.BLUE}Obteniendo órdenes de zoho para el canal {self.store}{Style.RESET_ALL}")
+                        
+        zoho_conf = self.data['zoho']
+        url = f"{zoho_conf['api_domain']}/inventory/v1/salesorders"
+        
+        params = {
+            "organization_id": zoho_conf['organization_id'],
+            "page": page,
+            "per_page": per_page
+        }
+        
+        headers = {
+            "Authorization": f"Zoho-oauthtoken {zoho_conf['access_token']}",
+            "Content-Type": "application/json"
+        }
+
+        response = requests.get(url, headers=headers, params=params)
+        data_consulted = response.json()
+
+        # Validamos la respuesta
+        if data_consulted.get("code") != 0:
+            print(Fore.RED + f"⚠️ Error al obtener órdenes de Zoho: {data_consulted.get('message')}")
+
+            # Intentamos refrescar token si el error indica falta de autorización
+            if "not authorized" in str(data_consulted.get("message", "")).lower():
+                new_token = self.refresh_zoho_token()
+                if new_token:
+                    headers["Authorization"] = f"Zoho-oauthtoken {new_token}"
+                    response = requests.get(url, headers=headers, params=params)
+                    data_consulted = response.json()
+                    if data_consulted.get("code") == 0:
+                        print(Fore.GREEN + "✅ Token actualizado y órdenes obtenidas correctamente.")
+                        return data_consulted.get("salesorders", [])
+                    else:
+                        print(Fore.RED + f"❌ Error tras refrescar token: {data_consulted.get('message')}")
+                        return []
+                else:
+                    return []
+            return []
+
+        # Si todo salió bien
+        print(Fore.GREEN + f"✅ Órdenes obtenidas correctamente ({len(data_consulted.get('salesorders', []))} registros)")
+
+        orders = data_consulted.get("salesorders", [])
+        # Órdenes en zoho
+        #pprint(orders)
+        unique_orders = {o.get("salesorder_id"): o for o in orders}.values()
+        print(f"🔄 Órdenes únicas obtenidas: {len(unique_orders)}")
+
+        # Limpiamos los campos más importantes para comparación con Shopify
+        data_cleaned = [{
+            "salesorder_id": o.get("salesorder_id"),
+            "salesorder_number": o.get("salesorder_number"),
+            "date": o.get("date"),
+            "customer_name": o.get("customer_name"),
+            "status": o.get("status"),
+            "total": o.get("total"),
+            "currency_code": o.get("currency_code"),
+            "line_items": [{
+                "item_id": i.get("item_id"),
+                "name": i.get("name"),
+                "sku": i.get("sku"),
+                "quantity": i.get("quantity"),
+                "rate": i.get("rate"),
+                "total": i.get("total")
+            } for i in o.get("line_items", [])]
+        } for o in unique_orders]
+
+        print(f"✅ {len(data_cleaned)} órdenes de venta limpias obtenidas de Zoho (página {page})")
+        return orders
+
     def refresh_zoho_token(self):
         """Refresca el access_token de Zoho y actualiza el YAML."""
         try:

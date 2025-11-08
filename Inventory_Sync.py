@@ -14,7 +14,9 @@ class SHOPIFY:
         
         # 1️⃣ Obtener productos activos en Zoho
         active_items = self.zoho_inventory.get_zoho_items()
-        main_shopify_items = {"name": "Riafol"}
+        # Imprimir los productos zoho
+        #pprint(active_items) 
+        main_shopify_items = {'name': 'SOLUCIÓN MICRODACYN ESTERILIZANTE ANTISÉPTICA ATOMIZADOR 120 ML'}
         main_store_items = [
             item for item in active_items
             if all(item.get(k) == v for k, v in main_shopify_items.items())
@@ -28,7 +30,8 @@ class SHOPIFY:
 
         # 3️⃣ Obtener productos existentes en Shopify (1 sola llamada)
         shopify_products = self.shopify_management.get_shopify_products()
-        pprint(shopify_products)
+        # Lista con productos shopify
+        #pprint(shopify_products)
         shopify_dict = {}
         for p in shopify_products:
             if p.get("variants"):
