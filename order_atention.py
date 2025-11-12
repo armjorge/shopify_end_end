@@ -9,17 +9,16 @@ import pandas as pd
 from Library.helpers import HELPERS
 
 class ORDER_ATTENTION:
-
     # Orchstrate the main flow
     def order_attention_menu(self):
         init(autoreset=True)
-        print(f"{Fore.RED}Atención de Órdenes{Style.RESET_ALL}")
+        print(f"{Fore.BLUE}\tINICIALIZANDO ATENCIÓN DE ÓRDENES{Style.RESET_ALL}")
         # Initialize Sprint 1.1: Get product list
         self.shopify_orders = print("\tÓrdenes de compra (clientes) obtenidas de Shopify")
 
         self.zoho_orders = print("\tÓrdenes de venta registradas en zoho")
         # Seleccionar tienda
-        store = "main_shopify"
+        store = "managed_store_one"
 
 
         # Inicializar gestor de Zoho

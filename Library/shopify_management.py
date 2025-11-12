@@ -8,7 +8,7 @@ from datetime import datetime
 
 class SHOPIFY_MANAGEMENT:
     def __init__(self, working_folder, yaml_data, store):
-        print(Fore.BLUE + "Initializing SHOPIFY_MANAGEMENT")
+        print(Fore.BLUE + f"\tINICIALIZANDO SHOPIFY_MANAGEMENT {store}")
         self.working_folder = working_folder
         self.data = yaml_data
         self.shopify_conf = yaml_data[store]
@@ -18,6 +18,7 @@ class SHOPIFY_MANAGEMENT:
             "X-Shopify-Access-Token": self.shopify_conf["access_token"]
         }
         self.log_file = os.path.join(self.working_folder, "shopify_sync_log.json")
+        self.store = store
 
     def _log_operation(self, action_type, sku, status_code, response_time):
         log_entry = {
@@ -46,7 +47,7 @@ class SHOPIFY_MANAGEMENT:
         Fetches a paginated Shopify collection and persists a raw snapshot.
         """
         if verbose:
-            print(Fore.YELLOW + f"Fetching all {resource_plural} from Shopify...")
+            print(Fore.YELLOW + f"Obteniendo todos {resource_plural} de Shopify {self.store}...")
 
         endpoint = f"{self.base_url}{self.shopify_conf['endpoints'][endpoint_key]}"
         params = {"limit": limit}
@@ -66,7 +67,7 @@ class SHOPIFY_MANAGEMENT:
                 break
 
             if response.status_code != 200:
-                print(Fore.RED + f"⚠️ Error fetching {resource_plural}: {response.status_code}")
+                print(Fore.RED + f"⚠️ Error al obtenerlos {resource_plural}: {response.status_code}")
                 print(response.text)
                 break
 
@@ -98,7 +99,8 @@ class SHOPIFY_MANAGEMENT:
         with open(snapshot_path, "w", encoding="utf-8") as f:
             json.dump(items, f, ensure_ascii=False)
         if verbose:
-            print(Fore.CYAN + f"📦 Snapshot guardado en {snapshot_path}")
+            #print(Fore.CYAN + f"📦 Snapshot guardado en {snapshot_path}")
+            pass
 
         return items
 

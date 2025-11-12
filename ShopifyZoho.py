@@ -38,7 +38,8 @@ class SHOPIFY_ZOHO_ORCHESTRATOR:
         
     def __init__(self):
         self.folder_root = self.get_root_path()
-        self.working_folder = os.path.join(self.folder_root, "Carrier management")  
+        print(f"Root path set to: {self.folder_root}")
+        self.working_folder = os.path.join(self.folder_root, "Shopify_files")  
         os.makedirs(self.working_folder, exist_ok=True)
         self.data_yaml = YAMLCREATOR(self.working_folder).data
         try:

@@ -5,33 +5,50 @@ from Library.yaml_creator import YAMLCREATOR
 from Library.zoho_inventory import ZOHO_INVENTORY
 from pprint import pprint
 from Library.shopify_management import SHOPIFY_MANAGEMENT
+from Library.helpers import HELPERS
+
 
 class SHOPIFY:
     # Orchstrate the main flow
     def run(self):
         init(autoreset=True)
-        print(f"{Fore.RED}Shopify-Zoho Integration{Style.RESET_ALL}")
-        
+        print(f"{Fore.RED}Shopify-Zoho Integración de Inventarios{Style.RESET_ALL}")
+        store1 = "managed_store_one"
+        store2 = "managed_store_two"
+        # Crear instancias de las clases principales
+        self.zoho_inventory = ZOHO_INVENTORY(self.working_folder, self.data_yaml, store1)
+        shopify_management_one = SHOPIFY_MANAGEMENT(self.working_folder, self.data_yaml, store1)
+        shopify_management_two = SHOPIFY_MANAGEMENT(self.working_folder, self.data_yaml, store2)
+
+
         # 1️⃣ Obtener productos activos en Zoho
         active_items = self.zoho_inventory.get_zoho_items()
-        # Imprimir los productos zoho
-        #pprint(active_items) 
-        main_shopify_items = {'name': 'SOLUCIÓN MICRODACYN ESTERILIZANTE ANTISÉPTICA ATOMIZADOR 120 ML'}
-        main_store_items = [
+        zoho_items_path = os.path.join(self.working_folder, f"Zoho_full_items.xlsx")
+        self.helpers.dict_to_excel(active_items, zoho_items_path)       
+
+        # Preparar carga de trabajo por tienda
+        work_load = {store1: shopify_management_one, store2: shopify_management_two}
+        for store_code, shopify_manager in work_load.items():
+            #Obtén la lista de items específicos para la tienda
+            shop_items_list = self.data_yaml[store_code].get("items", {})
+            zoho_items_store = [
             item for item in active_items
-            if all(item.get(k) == v for k, v in main_shopify_items.items())
-        ]
-        print("\nProductos ZOHO finales\n")
-        pprint(main_store_items)
+            if all(item.get(k) == v for k, v in shop_items_list.items())]
+            print(f"\nProductos ZOHO finales {store_code}: {len(zoho_items_store)} items en el dict de zoho")
+            zoho_store_path = os.path.join(self.working_folder, f"Zoho_{store_code}.xlsx")
+            self.helpers.dict_to_excel(zoho_items_store, zoho_store_path)
+            # 2️⃣ Obtener productos existentes en Shopify (1 sola llamada)
+            shopify_products = shopify_manager.get_shopify_products() 
+            # 3️⃣ Actualizar inventarios en Shopify según Zoho       
+            self.update_inventory_levels(shopify_products, zoho_items_store, shopify_manager)
+        print(Fore.GREEN + "\n✅ Proceso de sincronización completado para todas las tiendas.")
 
-        # 2️⃣ Inicializar gestor de Shopify
-        store = "main_shopify"
-        self.shopify_management = SHOPIFY_MANAGEMENT(self.working_folder, self.data_yaml, store)
 
-        # 3️⃣ Obtener productos existentes en Shopify (1 sola llamada)
-        shopify_products = self.shopify_management.get_shopify_products()
-        # Lista con productos shopify
+    def update_inventory_levels(self, shopify_products, main_store_items, shopify_management):
+        #print("\n---Items Shopify\n")
         #pprint(shopify_products)
+        #print("\n---Items ZOHO\n")
+        #pprint(main_store_items)
         shopify_dict = {}
         for p in shopify_products:
             if p.get("variants"):
@@ -80,10 +97,10 @@ class SHOPIFY:
         
         # 5️⃣ Ejecutar acciones necesarias
         if to_create:
-            self.shopify_management.create_items(to_create, shopify_products)
+            shopify_management.create_items(to_create, shopify_products)
         if to_update:
             for u in to_update:
-                self.shopify_management.update_inventory_level(
+                shopify_management.update_inventory_level(
                     u["inventory_item_id"],
                     u["sku"],  # corregido: antes usaba item_name
                     u["qty"]
@@ -97,9 +114,10 @@ class SHOPIFY:
                 missing_in_zoho.append(prod)
         if missing_in_zoho:
             for d in missing_in_zoho:
-                self.shopify_management.deactivate_product(d["id"], d["title"])
+                shopify_management.deactivate_product(d["id"], d["title"])
 
         print(Fore.GREEN + "✅ Sincronización completa.")
+
 
     # Initialize the main components
     def __init__(self):
@@ -107,8 +125,8 @@ class SHOPIFY:
         self.working_folder = os.path.join(self.folder_root, "Shopify_files")  
         os.makedirs(self.working_folder, exist_ok=True)
         self.data_yaml = YAMLCREATOR(self.working_folder).data
-        # Initialize Sprint 1.1: Get product list
-        self.zoho_inventory = ZOHO_INVENTORY(self.working_folder, self.data_yaml)
+        self.helpers = HELPERS()
+
         
 
     def get_root_path(self):

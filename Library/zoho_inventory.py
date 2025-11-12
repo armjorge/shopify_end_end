@@ -11,7 +11,7 @@ class ZOHO_INVENTORY:
     def __init__(self, working_folder, yaml_data, store):
         init(autoreset=True)
 
-        print(Fore.BLUE + "Inicializando ZOHO_INVENTORY"+ Style.RESET_ALL)
+        print(Fore.BLUE + "\tInicializando ZOHO_INVENTORY"+ Style.RESET_ALL)
         self.working_folder = working_folder
         self.data = yaml_data
         self.yaml_path = os.path.join(self.working_folder, "config.yml")
@@ -95,7 +95,7 @@ class ZOHO_INVENTORY:
         """
         Obtiene órdenes de venta desde Zoho Inventory y devuelve una lista de dicts limpios.
         """ 
-        print(f"{Fore.BLUE}Obteniendo órdenes de zoho para el canal {self.store}{Style.RESET_ALL}")
+        print(f"{Fore.BLUE}Obteniendo órdenes de zoho desde el canal {self.store}{Style.RESET_ALL}")
                         
         zoho_conf = self.data['zoho']
         url = f"{zoho_conf['api_domain']}/inventory/v1/salesorders"
