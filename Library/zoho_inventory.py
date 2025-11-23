@@ -8,15 +8,15 @@ from pprint import pprint
 
 
 class ZOHO_INVENTORY:
-    def __init__(self, working_folder, yaml_data, store):
+    def __init__(self, working_folder, yaml_data, store=None):
         init(autoreset=True)
-
         print(Fore.BLUE + "\tInicializando ZOHO_INVENTORY"+ Style.RESET_ALL)
         self.working_folder = working_folder
         self.data = yaml_data
         self.yaml_path = os.path.join(self.working_folder, "config.yml")
         self.store = store
-
+    def feed_data_zoho(self):
+        print("Zoho a mongo DB")
     def get_zoho_items(self, page=1, per_page=200):
         """
         Obtiene items del inventario de Zoho y devuelve una lista de dicts limpios.

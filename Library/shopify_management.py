@@ -5,10 +5,11 @@ import json
 import time
 from pprint import pprint
 from datetime import datetime
+from pymongo import MongoClient
 
 class SHOPIFY_MANAGEMENT:
     def __init__(self, working_folder, yaml_data, store):
-        print(Fore.BLUE + f"\tINICIALIZANDO SHOPIFY_MANAGEMENT {store}")
+        print(Fore.BLUE + f"\tINICIALIZANDO SHOPIFY_MANAGEMENT {store}"+ Style.RESET_ALL)
         self.working_folder = working_folder
         self.data = yaml_data
         self.shopify_conf = yaml_data[store]
@@ -30,6 +31,109 @@ class SHOPIFY_MANAGEMENT:
         }
         with open(self.log_file, "a") as f:
             f.write(json.dumps(log_entry) + "\n")
+
+    
+    def mirror_endpoints(self, resolved_endpoints, store, extract_all=False):
+        """
+        Descarga todos los datos de los endpoints de Shopify (paginados)
+        y guarda un snapshot completo en MongoDB, por tienda y por endpoint.
+
+        Estructura en MongoDB:
+        - DB: shopify
+        - Colección: <store>  (por ejemplo "managed_store_one")
+        - Documento por endpoint:
+            _id: "<store>_<endpoint_key>"
+            {
+                _id: "...",
+                store: "<store>",
+                endpoint_key: "<endpoint_key>",
+                fetched_at: <UTC datetime>,
+                count: <int>,
+                data: [ ... payload completo de Shopify ... ]
+            }
+        """
+        print(Fore.BLUE + f"\tMirroring Shopify data for store: {self.store}" + Style.RESET_ALL)
+
+        # 1) Asegurar que la config de Shopify tenga el mapa de endpoints
+        #    (se construye en tiempo de ejecución a partir de resolved_endpoints)
+        self.shopify_conf.setdefault("endpoints", {}).update(resolved_endpoints)
+
+        # 2) Conectar a MongoDB usando la URL del YAML (non_sql_database.url)
+        non_sql_conf = self.data.get("non_sql_database", {})
+        mongo_url = non_sql_conf.get("url")
+
+        if not mongo_url:
+            print(Fore.RED + "⚠️ No se encontró la URL de MongoDB en non_sql_database.url")
+            return
+
+        try:
+            client = MongoClient(mongo_url)
+        except Exception as e:
+            print(Fore.RED + f"⚠️ Error conectando a MongoDB: {e}")
+            return
+
+        db = client["shopify"]
+        collection = db[store]
+
+        if extract_all:
+            print(f"⚠️ extract_all=True → se hará carga completa de cada endpoint (sin filtros).")
+        else:
+            # Por ahora, también hacemos carga completa. Más adelante podemos
+            # usar updated_at_min para hacer incremental.
+            print(f"✅ Extracción (por ahora completa) para {store}")
+
+        for endpoint_key in resolved_endpoints.keys():
+            # Para cada endpoint (orders, products, customers, etc.)
+            root_key = endpoint_key  # La clave raíz en la respuesta JSON suele coincidir
+            print(f" → Extrayendo recurso '{endpoint_key}' de Shopify...")
+
+            # 3) Obtener TODOS los datos paginados desde Shopify
+            items = self._fetch_paginated_resource(
+                endpoint_key=endpoint_key,
+                limit=250,
+                verbose=True,
+                root_key=root_key,
+                snapshot_filename=f"{store}_{endpoint_key}_raw.json",
+                resource_plural=endpoint_key,
+                success_icon="🔄",
+                extra_params=None  # sin filtros, snapshot completo
+            )
+
+            # 4) Guardar / actualizar snapshot completo en MongoDB
+            from datetime import datetime as dt_utc
+            now_ts = dt_utc.utcnow()
+
+            doc_id = f"{store}_{endpoint_key}"
+            try:
+                result = collection.update_one(
+                    {"_id": doc_id},
+                    {
+                        "$set": {
+                            "store": store,
+                            "endpoint_key": endpoint_key,
+                            "fetched_at": now_ts,
+                            "count": len(items),
+                            "data": items,
+                        }
+                    },
+                    upsert=True,
+                )
+                upserted = result.upserted_id is not None
+                action = "insertado" if upserted else "actualizado"
+                print(
+                    Fore.GREEN
+                    + f"✅ Documento {doc_id} {action} en MongoDB (count={len(items)})"
+                    + Style.RESET_ALL
+                )
+            except Exception as e:
+                print(Fore.RED + f"⚠️ Error guardando datos en MongoDB para {doc_id}: {e}")
+
+        # 5) Cerrar conexión a Mongo
+        try:
+            client.close()
+        except Exception:
+            pass
+
 
     def _fetch_paginated_resource(
         self,
