@@ -1,5 +1,7 @@
 streamlit
-dotenv
+python-dotenv
 pandas
 colorama 
 PyYAML
+pymongo
+openpyxl

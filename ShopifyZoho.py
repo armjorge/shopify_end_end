@@ -2,7 +2,7 @@
 import os
 from dotenv import load_dotenv
 from colorama import Fore, Style, init
-from Library.yaml_creator import YAMLCREATOR
+from library.yaml_creator import YAMLCREATOR
 import yaml 
 
 class SHOPIFY_ZOHO_ORCHESTRATOR:

@@ -1,8 +1,8 @@
 import os
 from dotenv import load_dotenv
 from colorama import Fore, Style, init
-from Library.yaml_creator import YAMLCREATOR
-from Library.zoho_inventory import ZOHO_INVENTORY
+from library.yaml_creator import YAMLCREATOR
+from library.zoho_inventory import ZOHO_INVENTORY
 from pprint import pprint
 
 class APEX_SYNC:

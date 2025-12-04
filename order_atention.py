@@ -1,12 +1,12 @@
 import os
 from dotenv import load_dotenv
 from colorama import Fore, Style, init
-from Library.yaml_creator import YAMLCREATOR
-from Library.shopify_management import SHOPIFY_MANAGEMENT
+from library.yaml_creator import YAMLCREATOR
+from library.shopify_management import SHOPIFY_MANAGEMENT
 from pprint import pprint
-from Library.zoho_inventory import ZOHO_INVENTORY
+from library.zoho_inventory import ZOHO_INVENTORY
 import pandas as pd
-from Library.helpers import HELPERS
+from library.helpers import HELPERS
 
 class ORDER_ATTENTION:
     # Orchstrate the main flow

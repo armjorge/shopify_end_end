@@ -4,11 +4,11 @@ from pprint import pprint
 from dotenv import load_dotenv
 import sys
 
-from Library.zoho_inventory import ZOHO_INVENTORY
+from library.zoho_inventory import ZOHO_INVENTORY
 root_path = os.path.dirname(os.path.dirname(__file__))
 sys.path.insert(0, root_path)
-from Library.yaml_creator import YAMLCREATOR
-from Library.shopify_management import SHOPIFY_MANAGEMENT
+from library.yaml_creator import YAMLCREATOR
+from library.shopify_management import SHOPIFY_MANAGEMENT
 
 class INCREMENTAL_DB:
     def __init__(self):
