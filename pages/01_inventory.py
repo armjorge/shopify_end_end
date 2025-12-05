@@ -28,15 +28,38 @@ if BASE_PATH not in sys.path:
 
 env_file = os.path.join(BASE_PATH, ".env")
 folder_name = "MAIN_PATH"
-working_folder = None
 data_access = {}
+working_folder = BASE_PATH
 
 if os.path.exists(env_file):
+    # Modo desarrollo local: leemos .env
     load_dotenv(dotenv_path=env_file)
-    working_folder = os.getenv(folder_name)
+    env_main_path = os.getenv(folder_name)
+
+    if env_main_path:
+        working_folder = env_main_path
+        st.success(f"✅ MAIN_PATH tomado desde .env: {working_folder}")
+    else:
+        st.warning(
+            f"⚠️ Se encontró .env en {env_file} pero la variable {folder_name} no está definida.\n"
+            f"Se usará BASE_PATH como working_folder: {working_folder}"
+        )
+
 else:
-    st.error("❌ No se encontró el archivo .env en la raíz del proyecto.")
-    st.stop()
+    # Probablemente estamos en Render.com (no hay .env en el repo)
+    env_main_path = os.getenv(folder_name)
+
+    if env_main_path:
+        # Caso ideal: definiste MAIN_PATH en las environment vars de Render
+        working_folder = env_main_path
+        st.success(f"✅ MAIN_PATH tomado de variables de entorno del sistema: {working_folder}")
+    else:
+        # Último fallback: el directorio actual del proceso (repo en Render)
+        working_folder = os.getcwd()
+        st.warning(
+            "⚠️ No se encontró .env ni variable de entorno MAIN_PATH.\n"
+            f"Se usará el directorio actual como working_folder: {working_folder}"
+        )
 
 # BASE_PATH y working_folder definidos antes
 root_yaml = os.path.join(BASE_PATH, "config", "open_config.yml")
