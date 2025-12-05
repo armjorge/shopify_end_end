@@ -6,6 +6,7 @@ st.set_page_config(
 )
 
 st.title("Organizador multistore")
+st.write(f"🔎 Streamlit version: {st.__version__}")
 
 page_purpose = """
 - Al agregar un producto a la lista de la tienda y este ser activo, se carga el producto en la tienda tomando información de nuestro ERP.
