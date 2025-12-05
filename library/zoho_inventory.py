@@ -4,7 +4,7 @@ import os
 from pymongo import MongoClient
 from colorama import Fore, Style
 import requests
-
+import yaml
 
 class ZOHO_INVENTORY:
     def __init__(self, working_folder, yaml_data, store=None):
@@ -15,6 +15,46 @@ class ZOHO_INVENTORY:
         self.yaml_path = os.path.join(self.working_folder, "config.yml")
         self.store = store
 
+    def refresh_zoho_token(self):
+        """Refresca el access_token de Zoho y actualiza el YAML."""
+        try:
+            with open(self.yaml_path, "r") as f:
+                config = yaml.safe_load(f)
+
+            zoho_conf = config.get("zoho", {})
+            data = {
+                "refresh_token": zoho_conf.get("refresh_token"),
+                "client_id": zoho_conf.get("client_id"),
+                "client_secret": zoho_conf.get("client_secret"),
+                "grant_type": "refresh_token",
+            }
+
+            print(Fore.YELLOW + "🔄 Refrescando token de Zoho...")
+            token_url = "https://accounts.zoho.com/oauth/v2/token"
+            response = requests.post(token_url, data=data)
+            token_data = response.json()
+
+            if "access_token" not in token_data:
+                print(Fore.RED + f"❌ Error al refrescar token: {token_data}")
+                return None
+
+            new_access_token = token_data["access_token"]
+            config["zoho"]["access_token"] = new_access_token
+
+            # Guardar YAML actualizado
+            with open(self.yaml_path, "w") as f:
+                yaml.safe_dump(config, f, sort_keys=False)
+
+            # Actualizar en memoria
+            self.data["zoho"]["access_token"] = new_access_token
+
+            print(Fore.GREEN + "✅ Token renovado y YAML actualizado.")
+            return new_access_token
+
+        except Exception as e:
+            print(Fore.RED + f"⚠️ Error al refrescar token: {e}")
+            return None
+        
     def sync_zoho_inventory_to_mongo(self, logger=None):
         """
         Consulta varios endpoints de Zoho Inventory y los sincroniza en MongoDB.
