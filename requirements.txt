@@ -5,3 +5,4 @@ colorama
 PyYAML
 pymongo
 openpyxl
+sqlalchemy
