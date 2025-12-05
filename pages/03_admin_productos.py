@@ -6,9 +6,8 @@ import streamlit as st
 import yaml
 from dotenv import load_dotenv
 
-# ================== TÍTULO / DESCRIPCIÓN ==================
-st.title("Órdenes de venta (Zoho Inventory / CRM)")
-st.write("Vista de negocio de la colección `Zoho_Inventory.salesorders`.")
+st.title("Items de Zoho Inventory")
+st.write("Vista de negocio de la colección `Zoho_Inventory.items`.")
 
 st.divider()
 
@@ -96,22 +95,21 @@ mongo_db_url = yaml_data["non_sql_database"]["url"]
 try:
     client = MongoClient(mongo_db_url)
     db = client["Zoho_Inventory"]
-    collection = db["salesorders"]
+    collection = db["items"]
 except Exception as e:
     st.error(f"❌ Error al conectar con MongoDB: {e}")
     st.stop()
 
-# ================== EXTRACCIÓN DE ORDENES ==================
+# ================== EXTRACCIÓN DE ITEMS ==================
 fields = [
-    "salesorder_number",
-    "customer_name",
-    "invoiced_status",
-    "has_attachment",
-    "order_status",   # <- vamos a filtrar por esta
-    "paid_status",
-    "is_emailed",
-    "quantity",
-    "total",
+    "item_name",
+    "sku",
+    "unit",
+    "actual_available_stock",
+    "available_stock",
+    "stock_on_hand",
+    "rate",
+    "status",
 ]
 
 projection = {field: 1 for field in fields}
@@ -122,37 +120,30 @@ try:
     docs = list(cursor)
     df = pd.DataFrame(docs, columns=fields)
 except Exception as e:
-    st.error(f"❌ Error al leer la colección 'salesorders': {e}")
+    st.error(f"❌ Error al leer la colección 'items': {e}")
     st.stop()
 
-# ================== VISTA + FILTRO POR order_status ==================
+# ================== VISTA + FILTRO POR STATUS ==================
 if df.empty:
-    st.warning("🔎 Sin datos en la colección `salesorders` con los campos seleccionados.")
+    st.warning("🔎 Sin datos en la colección `items` con los campos seleccionados.")
 else:
-    # Columna de estado que vamos a usar
-    status_col = "order_status"
+    # Opciones de status (incluyendo 'Todos')
+    status_values = sorted(
+        [s for s in df["status"].dropna().unique().tolist()]
+    )
+    status_sel = st.selectbox(
+        "Filtrar por status",
+        options=["Todos"] + status_values,
+        index=0,
+    )
 
-    if status_col not in df.columns:
-        st.warning(f"⚠️ La columna '{status_col}' no existe en el DataFrame. Mostrando todas las filas sin filtro.")
-        df_view = df.copy()
+    if status_sel != "Todos":
+        df_view = df[df["status"] == status_sel].copy()
     else:
-        status_values = sorted(
-            [s for s in df[status_col].dropna().unique().tolist()]
-        )
-
-        status_sel = st.selectbox(
-            "Filtrar por estado de la orden",
-            options=["Todos"] + status_values,
-            index=0,
-        )
-
-        if status_sel != "Todos":
-            df_view = df[df[status_col] == status_sel].copy()
-        else:
-            df_view = df.copy()
+        df_view = df.copy()
 
     if df_view.empty:
-        st.info("📭 Sin datos para el filtro seleccionado.")
+        st.info("📭 Sin datos para el status seleccionado.")
     else:
         st.write(f"Mostrando {len(df_view)} registros:")
         st.dataframe(df_view, use_container_width=True)
@@ -162,5 +153,5 @@ st.write("Elegir qué productos van a cada tienda")
 st.write("store_1 = ")
 
 st.divider()
-st.write("Sincronizar inventarios Zoho → MongoDB")
+st.write("Sincronizar inventarios Zoho -> MongoDB")
 st.write("store_1 = ")
