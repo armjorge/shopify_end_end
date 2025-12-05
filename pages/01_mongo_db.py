@@ -8,7 +8,7 @@ import io
 import contextlib
 
 
-st.title("Zoho -> Repositorio en MongoDB 📦")
+st.title("Zoho y Shopify -> Repositorio en MongoDB 📦")
 
 st.write("Vista para actualizar el repositorio de endpoints en MongoDB.")
 
@@ -121,3 +121,36 @@ if st.button("Iniciar Sincronización ZOHO Inventory"):
     st.subheader("📊 Resumen")
     st.json(summary)    
     
+st.divider()
+
+
+if st.button("Iniciar Sincronización SHOPIFY"):
+    from library.shopify_mongo_db import SHOPIFY_MONGODB
+
+    store1 = "managed_store_one"
+    store2 = "managed_store_two"
+
+
+
+    # Contenedor y buffer para el log en pantalla
+    log_placeholder = st.empty()
+    log_lines = []
+
+    def streamlit_logger(msg):
+        # acumulamos los mensajes y refrescamos el contenedor
+        log_lines.append(str(msg))
+        log_placeholder.text("\n".join(log_lines))
+
+    st.info("⏳ Inicializando sincronización Shopify...")
+
+    with st.spinner("Sincronizando con Shopify..."):
+        shopify_management_one = SHOPIFY_MONGODB(working_folder, yaml_data, store1)
+        summary_one = shopify_management_one.sync_shopify_to_mongo(logger=streamlit_logger)
+        shopify_management_two = SHOPIFY_MONGODB(working_folder, yaml_data, store2)
+        summary_two = shopify_management_two.sync_shopify_to_mongo(logger=streamlit_logger)
+
+    st.subheader("📊 Resumen Shopify")
+    st.json({
+        store1: summary_one,
+        store2: summary_two,
+    })

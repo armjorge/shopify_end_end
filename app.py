@@ -26,14 +26,14 @@ st.page_link(
 )
 
 st.page_link(
-    "pages/01_inventory.py",
-    label="Inventarios",
+    "pages/01_mongo_db.py",
+    label="Sincronizar a MongoDB",
     icon="📦",
 )
 
 st.page_link(
     "pages/02_orders.py",
-    label="Órdenes",
+    label="Generar y actualizar órdenes",
     icon="🧾",
 )
 
