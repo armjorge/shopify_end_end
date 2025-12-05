@@ -4,9 +4,6 @@ import os
 from dotenv import load_dotenv
 import yaml
 from library.zoho_inventory import ZOHO_INVENTORY
-import io
-import contextlib
-
 
 st.title("Zoho y Shopify -> Repositorio en MongoDB 📦")
 
