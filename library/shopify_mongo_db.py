@@ -132,8 +132,12 @@ class SHOPIFY_MONGODB:
                 "root_key": "inventory_levels",
                 "extra_params": {},  # location_ids se resuelven dinámicamente
             },
-            # aquí luego agregamos más (products, customers, etc.)
-        }
+
+            "products": {
+            "pk": "id",
+            "root_key": "products",
+            "extra_params": {}
+        }}
 
         summary = {}
 
