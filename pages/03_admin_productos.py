@@ -9,6 +9,13 @@ from dotenv import load_dotenv
 st.title("Items de Zoho Inventory")
 st.write("Vista de negocio de la colección `Zoho_Inventory.items`.")
 
+log_placeholder = st.empty()
+log_lines = []
+def streamlit_logger(msg):
+    # acumulamos los mensajes y refrescamos el contenedor
+    log_lines.append(str(msg))
+    log_placeholder.text("\n".join(log_lines))
+
 st.divider()
 
 # ================== RUTA BASE / .env / MAIN_PATH ==================
@@ -290,3 +297,14 @@ for tab, (store_key, store_label) in zip(tabs, stores.items()):
                 st.rerun()
         else:
             st.info("No hay productos que retirar en esta tienda.")
+st.markdown("---")
+
+# ====== RETIRAR PRODUCTOS DE LA TIENDA ======
+st.markdown("### Sincronizar inventario entre las tiendas")
+if st.button("Sincronización de inventario"):
+    stores = ["managed_store_one", "managed_store_two"]
+    for store in stores: 
+        st.write(f"Sincronizando inventario para {store}...")
+        from library.inventory_automatization import INVENTORY_AUTOMATIZATION
+        app = INVENTORY_AUTOMATIZATION(working_folder, yaml_data)
+        app.run_inventory_sync(store, logger=streamlit_logger)
