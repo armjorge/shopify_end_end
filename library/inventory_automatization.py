@@ -68,6 +68,7 @@ class INVENTORY_AUTOMATIZATION:
         # Guardar en caché
         self._location_id_cache[store_key] = loc_id
         return loc_id
+
     def send_workload_to_shopify_api(self, list_bodies: list, store_key: str, method: str):
         """
         list_bodies: lista de dicts con el body listo para Shopify
@@ -303,9 +304,7 @@ class INVENTORY_AUTOMATIZATION:
                 print(str(msg))
 
         # ==== 0) REFRESCAR datos de Shopify en Mongo ====
-        from library.shopify_mongo_db import SHOPIFY_MONGODB
-        shopify_management = SHOPIFY_MONGODB(self.working_folder, self.data, store)
-        shopify_management.sync_shopify_to_mongo()
+
 
         # ==== 1) Conexión a Mongo ====
         mongo_db_url = self.data["non_sql_database"]["url"]
@@ -437,7 +436,6 @@ class INVENTORY_AUTOMATIZATION:
         _log(f"zoho_update_status → {len(zoho_update_status)} items (comparar status)")
 
         # ===================== 3) ITEMS SHOPIFY SIN VÍNCULO (DESACTIVAR) =====================
-        # ===================== 3) ITEMS SHOPIFY SIN VÍNCULO (DESACTIVAR) =====================
         linked_shopify_ids = {
             str(sid) for sid in zoho_to_shopify_map.values() if sid
         }
@@ -448,14 +446,30 @@ class INVENTORY_AUTOMATIZATION:
             if not pid:
                 continue
 
+            # Solo nos interesa si NO está vinculado a ningún item Zoho
             if pid not in linked_shopify_ids:
+                shopify_status_raw = (prod.get("status") or "").lower()
+
+                # 🔹 Regla nueva:
+                # Si el producto YA está archived (o incluso draft, si quieres),
+                # no necesitamos mandar un disable extra.
+                if shopify_status_raw == "archived":
+                    _log(
+                        f"[DISABLE][SKIP] pid={pid} ya está archived en Shopify, "
+                        "no se agrega a deactivate_products."
+                    )
+                    continue
+
+                # Si quisieras excluir también 'draft', descomenta:
+                # if shopify_status_raw in ("archived", "draft"):
+                #     ...
+
                 deactivate_products.append({
                     "shopify_id": prod.get(shopify_item_pk),
                     "shopify_status": prod.get("status"),
                 })
 
-        _log(f"deactivate_products → {len(deactivate_products)} items (sin vínculo con Zoho)")
-        
+        _log(f"deactivate_products → {len(deactivate_products)} items (sin vínculo con Zoho y no archived)")        
         # ===================== CONSTRUIR BODIES PARA SHOPIFY =====================
         bodies_create = []
         for rec in zoho_create_items:
@@ -600,6 +614,7 @@ class INVENTORY_AUTOMATIZATION:
             "deactivate_bodies": bodies_deactivate,
             "update_number_bodies": bodies_update_number,
         }
+
     def run_inventory_sync(self, store: str, logger=None):
         """
         Orquesta:
@@ -712,4 +727,7 @@ if __name__ == "__main__":
         print(f"Sincronizando inventario para {store}...")
         from library.inventory_automatization import INVENTORY_AUTOMATIZATION
         app = INVENTORY_AUTOMATIZATION(working_folder, yaml_data, store)
+        #from library.shopify_mongo_db import SHOPIFY_MONGODB
+        #shopify_management = SHOPIFY_MONGODB(self.working_folder, self.data, store)
+        #shopify_management.sync_shopify_to_mongo()        
         app.run_inventory_sync(store)
