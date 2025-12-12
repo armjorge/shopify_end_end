@@ -338,8 +338,7 @@ for tab, (store_key, store_label) in zip(tabs, stores.items()):
         else:
             st.info("No hay productos que retirar en esta tienda.")
 
-st.divider()
-st.markdown("### Sincronizar inventario entre las tiendas")
+import streamlit as st
 
 stores = ["managed_store_one", "managed_store_two"]
 
@@ -358,7 +357,40 @@ Este botón ejecuta el **pipeline completo** para que Shopify refleje el inventa
 """
 )
 
-# 🔘 BOTÓN ÚNICO: Sincronizar Zoho y Shopify
+# =========================
+# 🔹 Logger para Streamlit
+# =========================
+
+log_placeholder = st.empty()
+
+if "log_lines" not in st.session_state:
+    st.session_state["log_lines"] = []
+
+
+def streamlit_logger(message: str, level: str = "info", *args, **kwargs):
+    """
+    Logger simple que manda los mensajes a un bloque de texto en Streamlit.
+    Compatible con llamadas tipo logger(msg) o logger(msg, level="info").
+    """
+    emoji = "ℹ️"
+    if level == "success":
+        emoji = "✅"
+    elif level == "warning":
+        emoji = "⚠️"
+    elif level == "error":
+        emoji = "❌"
+
+    st.session_state["log_lines"].append(f"{emoji} {message}")
+
+    # Mostramos solo las últimas N líneas para no saturar
+    text = "\n".join(st.session_state["log_lines"][-200:])
+    log_placeholder.code(text, language="text")
+
+
+# =========================
+# 🔘 BOTÓN ÚNICO PIPELINE
+# =========================
+
 if st.button("Sincronizar Zoho y Shopify", use_container_width=True, key="btn_full_sync"):
     from library.zoho_inventory import ZOHO_INVENTORY
     from library.shopify_mongo_db import SHOPIFY_MONGODB
@@ -378,7 +410,7 @@ if st.button("Sincronizar Zoho y Shopify", use_container_width=True, key="btn_fu
     st.success("✅ Zoho Inventory sincronizado con la base interna.")
     st.json(zoho_summary)
 
-    # Diccionarios para ir guardando resúmenes de Shopify
+    # Diccionarios para guardar resúmenes de Shopify
     shopify_sync_before = {}
     shopify_sync_after_cycle1 = {}
     shopify_sync_final = {}
@@ -398,14 +430,13 @@ if st.button("Sincronizar Zoho y Shopify", use_container_width=True, key="btn_fu
     st.json(shopify_sync_before)
 
     # ------------------------------------------------------------------
-    # 3) Ciclo 1 de inventario: Base interna → Shopify (creación de artículos)
+    # 3) Ciclo 1: Base interna → Shopify (creación/ajustes principales)
     # ------------------------------------------------------------------
     st.subheader("3️⃣ Ciclo 1: Base interna → Shopify (creación/ajustes principales)")
     with st.spinner("Aplicando inventario base interna → Shopify (ciclo 1)..."):
         for store in stores:
             st.write(f"🔄 Ciclo 1: sincronizando inventario Base interna → Shopify para **{store}**...")
             app = INVENTORY_AUTOMATIZATION(working_folder, yaml_data)
-            # Si run_inventory_sync devuelve algo, puedes capturarlo y guardarlo
             app.run_inventory_sync(store, logger=streamlit_logger)
     st.success("✅ Ciclo 1 de inventario aplicado en todas las tiendas.")
 
@@ -424,7 +455,7 @@ if st.button("Sincronizar Zoho y Shopify", use_container_width=True, key="btn_fu
     st.json(shopify_sync_after_cycle1)
 
     # ------------------------------------------------------------------
-    # 5) Ciclo 2 de inventario: Base interna → Shopify (estatus y afinado)
+    # 5) Ciclo 2: Base interna → Shopify (estatus / afinado)
     # ------------------------------------------------------------------
     st.subheader("5️⃣ Ciclo 2: Base interna → Shopify (estatus / afinado de artículos)")
     with st.spinner("Aplicando inventario base interna → Shopify (ciclo 2)..."):
@@ -451,8 +482,6 @@ if st.button("Sincronizar Zoho y Shopify", use_container_width=True, key="btn_fu
     st.json(shopify_sync_final)
 
     st.success("🎉 Pipeline completo Zoho ↔ Shopify finalizado correctamente.")
-
-
 # (Opcional) Si quieres, aún puedes conservar abajo los 3 botones granulares
 # para casos avanzados / debugging.
 # Definimos las tiendas
