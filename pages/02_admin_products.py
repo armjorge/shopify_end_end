@@ -467,3 +467,35 @@ with col4:
     if st.button("Mongo → Local (imagenes)"):
         img_manager.mongo_to_local()
         st.success("Sincronización Mongo → local completada.")
+
+st.markdown("### 📤 Subir imágenes desde el navegador a una carpeta local")
+
+item_id = st.text_input("item_id de Zoho", "")
+alias = st.text_input("Nombre corto (opcional, se usará en el nombre de la carpeta)", "")
+
+uploaded_files = st.file_uploader(
+    "Arrastra aquí una o varias imágenes",
+    type=["jpg", "jpeg", "png"],
+    accept_multiple_files=True,
+)
+
+if st.button("Guardar imágen a item"):
+    if not item_id:
+        st.error("Necesitas indicar al menos el item_id.")
+    elif not uploaded_files:
+        st.warning("No se seleccionó ningún archivo.")
+    else:
+        # usamos el mismo sanitizador que en la clase
+        clean_alias = img_manager.sanitize_name(alias) if alias else ""
+        folder_name = f"{item_id}_{clean_alias}" if clean_alias else item_id
+        dest_folder = os.path.join(images_path, folder_name)
+        os.makedirs(dest_folder, exist_ok=True)
+
+        saved = 0
+        for uf in uploaded_files:
+            file_path = os.path.join(dest_folder, uf.name)
+            with open(file_path, "wb") as out:
+                out.write(uf.read())
+            saved += 1
+
+        st.success(f"Guardadas {saved} imágenes en: {dest_folder}")
