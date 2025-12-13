@@ -404,9 +404,7 @@ if st.button("Sincronizar Zoho y Shopify", use_container_width=True, key="btn_fu
     st.subheader("1️⃣ Zoho Inventory → Base interna")
     with st.spinner("Sincronizando Zoho Inventory con la base interna..."):
         zoho_inventory = ZOHO_INVENTORY(working_folder, yaml_data)
-        zoho_summary = zoho_inventory.sync_zoho_inventory_to_mongo(
-            logger=streamlit_logger
-        )
+        zoho_summary = zoho_inventory.sync_zoho_inventory_to_mongo(logger=streamlit_logger)
     st.success("✅ Zoho Inventory sincronizado con la base interna.")
     st.json(zoho_summary)
 
@@ -422,64 +420,26 @@ if st.button("Sincronizar Zoho y Shopify", use_container_width=True, key="btn_fu
     with st.spinner("Sincronizando Shopify → Base interna (antes de aplicar inventario)..."):
         for store in stores:
             st.write(f"📥 Shopify → Base interna (estado inicial) para **{store}**...")
-            shopify_management = SHOPIFY_MONGODB(working_folder, yaml_data, store)
-            shopify_sync_before[store] = shopify_management.sync_shopify_to_mongo(
+            shopify_sync = SHOPIFY_MONGODB(working_folder, yaml_data, store)
+            shopify_sync_before[store] = shopify_sync.sync_shopify_to_mongo(
                 logger=streamlit_logger
             )
-    st.success("✅ Primer barrido Shopify → Base interna completado.")
-    st.json(shopify_sync_before)
-
-    # ------------------------------------------------------------------
-    # 3) Ciclo 1: Base interna → Shopify (creación/ajustes principales)
-    # ------------------------------------------------------------------
-    st.subheader("3️⃣ Ciclo 1: Base interna → Shopify (creación/ajustes principales)")
-    with st.spinner("Aplicando inventario base interna → Shopify (ciclo 1)..."):
         for store in stores:
-            st.write(f"🔄 Ciclo 1: sincronizando inventario Base interna → Shopify para **{store}**...")
-            app = INVENTORY_AUTOMATIZATION(working_folder, yaml_data)
-            app.run_inventory_sync(store, logger=streamlit_logger)
-    st.success("✅ Ciclo 1 de inventario aplicado en todas las tiendas.")
-
-    # ------------------------------------------------------------------
-    # 4) Segundo Shopify → Base interna (reflejar cambios del ciclo 1)
-    # ------------------------------------------------------------------
-    st.subheader("4️⃣ Shopify → Base interna (después del ciclo 1)")
-    with st.spinner("Actualizando base interna con los cambios del ciclo 1..."):
-        for store in stores:
-            st.write(f"📥 Shopify → Base interna (post ciclo 1) para **{store}**...")
-            shopify_management = SHOPIFY_MONGODB(working_folder, yaml_data, store)
-            shopify_sync_after_cycle1[store] = shopify_management.sync_shopify_to_mongo(
-                logger=streamlit_logger
-            )
-    st.success("✅ Segundo barrido Shopify → Base interna completado.")
-    st.json(shopify_sync_after_cycle1)
-
-    # ------------------------------------------------------------------
-    # 5) Ciclo 2: Base interna → Shopify (estatus / afinado)
-    # ------------------------------------------------------------------
-    st.subheader("5️⃣ Ciclo 2: Base interna → Shopify (estatus / afinado de artículos)")
-    with st.spinner("Aplicando inventario base interna → Shopify (ciclo 2)..."):
-        for store in stores:
-            st.write(f"🔄 Ciclo 2: actualizando estatus/artículos en Shopify para **{store}**...")
-            app = INVENTORY_AUTOMATIZATION(working_folder, yaml_data)
-            app.run_inventory_sync(store, logger=streamlit_logger)
-    st.success("✅ Ciclo 2 de inventario aplicado en todas las tiendas.")
-
-    # ------------------------------------------------------------------
-    # 6) Tercer Shopify → Base interna (reflejar el último cambio)
-    # ------------------------------------------------------------------
-    st.subheader("6️⃣ Shopify → Base interna (reflejar último estado)")
-    with st.spinner("Sincronizando por última vez Shopify → Base interna..."):
+            st.write(f"📥 Base interna con Zoho actualizado a -> Shopify para **{store}**...")
+            from library.inventory_automatization import INVENTORY_AUTOMATIZATION
+        
+            app = INVENTORY_AUTOMATIZATION(working_folder, yaml_data, store)
+            app.run_inventory_sync(store)    
         for store in stores:
             st.write(f"📥 Shopify → Base interna (estado final) para **{store}**...")
-            shopify_management = SHOPIFY_MONGODB(working_folder, yaml_data, store)
-            shopify_sync_final[store] = shopify_management.sync_shopify_to_mongo(
+            shopify_sync = SHOPIFY_MONGODB(working_folder, yaml_data, store)
+            shopify_sync_before[store] = shopify_sync.sync_shopify_to_mongo(
                 logger=streamlit_logger
-            )
-    st.success("✅ Tercer barrido Shopify → Base interna completado.")
+            )                    
+         
+    st.success("✅ Creación y actualización items por tienda Shopify completados.")
+    #st.json(shopify_sync_before)
 
-    st.subheader("📊 Resumen final Shopify → Base interna (estado final)")
-    st.json(shopify_sync_final)
 
     st.success("🎉 Pipeline completo Zoho ↔ Shopify finalizado correctamente.")
 # (Opcional) Si quieres, aún puedes conservar abajo los 3 botones granulares
