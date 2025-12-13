@@ -5,6 +5,9 @@ from pymongo import MongoClient
 from colorama import Fore, Style
 import requests
 import yaml
+import sys
+from dotenv import load_dotenv
+
 
 class ZOHO_INVENTORY:
     def __init__(self, working_folder, yaml_data, store=None):
@@ -238,3 +241,91 @@ class ZOHO_INVENTORY:
 
         client.close()
         return summary
+
+
+if __name__ == "__main__":
+    BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    # Aseguramos que BASE_PATH esté en sys.path
+    if BASE_PATH not in sys.path:
+        sys.path.insert(0, BASE_PATH) 
+    env_file = os.path.join(BASE_PATH, ".env")
+    folder_name = "MAIN_PATH"
+    data_access = {}
+    working_folder = BASE_PATH
+
+    if os.path.exists(env_file):
+        # Modo desarrollo local: leemos .env
+        load_dotenv(dotenv_path=env_file)
+        env_main_path = os.getenv(folder_name)
+        if env_main_path:
+            working_folder = env_main_path
+            print(f"✅ MAIN_PATH tomado desde .env: {working_folder}")
+        else:
+            print(
+                f"⚠️ Se encontró .env en {env_file} pero la variable {folder_name} no está definida.\n"
+                f"Se usará BASE_PATH como working_folder: {working_folder}"
+            )
+
+    else:
+        # Probablemente estamos en Render.com (no hay .env en el repo)
+        env_main_path = os.getenv(folder_name)
+
+        if env_main_path:
+            # Caso ideal: definiste MAIN_PATH en las environment vars de Render
+            working_folder = env_main_path
+            print(f"✅ MAIN_PATH tomado de variables de entorno del sistema: {working_folder}")
+        else:
+            # Último fallback: el directorio actual del proceso (repo en Render)
+            working_folder = os.getcwd()
+            print(
+                "⚠️ No se encontró .env ni variable de entorno MAIN_PATH.\n"
+                f"Se usará el directorio actual como working_folder: {working_folder}"
+            )
+
+    # BASE_PATH y working_folder definidos antes
+    root_yaml = os.path.join(BASE_PATH, "config", "open_config.yml")
+    pkg_yaml = os.path.join(working_folder, "config.yml")
+
+    root_exists = os.path.exists(root_yaml)
+    pkg_exists = os.path.exists(pkg_yaml)
+
+    # Mensajes por archivo
+    if root_exists:
+        print(f"✅ Se encontró configuración raíz: {root_yaml}")
+    else:
+        print(f"⚠️ No se encontró configuración raíz en: {root_yaml}")
+
+    if pkg_exists:
+        print(f"✅ Se encontró configuración de paquete: {pkg_yaml}")
+    else:
+        print(f"⚠️ No se encontró configuración de paquete en: {pkg_yaml}")
+
+    # Si no existe ninguno, detenemos
+    if not root_exists and not pkg_exists:
+        print(
+            "❌ No se encontró ningún archivo de configuración.\n"
+            f"- {root_yaml}\n"
+            f"- {pkg_yaml}"
+        )
+        sys.exit(1)
+
+    # Cargar y combinar data de ambos YAML
+    yaml_data = {}
+
+    if root_exists:
+        with open(root_yaml, "r") as f:
+            root_data = yaml.safe_load(f) or {}
+            yaml_data.update(root_data)  # base
+
+    if pkg_exists:
+        with open(pkg_yaml, "r") as f:
+            pkg_data = yaml.safe_load(f) or {}
+            yaml_data.update(pkg_data)   # sobreescribe claves si ya existen
+    # Lanza la función de automatización            
+
+
+    app = ZOHO_INVENTORY(working_folder, yaml_data)
+    #from library.shopify_mongo_db import SHOPIFY_MONGODB
+    
+    app.sync_zoho_inventory_to_mongo()    
+        
