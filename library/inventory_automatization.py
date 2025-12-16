@@ -752,13 +752,14 @@ class INVENTORY_AUTOMATIZATION:
 
         # ✅ IMPORTANTÍSIMO: fuera del loop
         update_bodies = []
+        not_listed_archives = 0
 
         for i, link in enumerate(bridge_items):
             zoho_id = self._safe_str(link.get("item_id"))
             shopify_id = self._safe_str(link.get("shopify_id"))
-
+            print(f"{i} Producto procesado: ID_zoho {zoho_id}, shopify_id {shopify_id}")
             # ✅ vínculo roto
-            if not zoho_id or not shopify_id:
+            if not shopify_id:
                 broken_links += 1
                 _log("⚠️ VÍNCULO INCOMPLETO en Zoho_Inventory.items_per_store")
                 _log(f"   store: {store} | index: {i}")
@@ -771,9 +772,36 @@ class INVENTORY_AUTOMATIZATION:
             zoho_doc = zoho_by_id.get(zoho_id)
             shopify_doc = shopify_by_id.get(shopify_id)
 
-            if not zoho_doc:
-                missing_zoho.append(zoho_id)
-                _log(f"⚠️ No encontré zoho_doc para item_id={zoho_id} (index={i})")
+            # ✅ CASO NUEVO: hay shopify_id pero NO hay zoho_id → archivar en Shopify
+            if zoho_id is None or zoho_id == "":
+                shopify_doc = shopify_by_id.get(shopify_id)
+                if not shopify_doc:
+                    missing_shopify.append(shopify_id)
+                    _log(f"⚠️ No encontré shopify_doc para product_id={shopify_id} (index={i})")
+                    continue
+
+                current_status = (shopify_doc.get("status") or "").lower()
+                if current_status == "archived":
+                    _log(f"✅ Ya estaba archived | product_id={shopify_doc.get('id')}")
+                    continue
+
+                payload = {
+                    "product": {
+                        "id": shopify_doc.get("id"),
+                        "status": "archived",
+                    }
+                }
+
+                update_bodies.append({
+                    "shopify_product_id": shopify_doc.get("id"),
+                    "shopify_admin_graphql_api_id": shopify_doc.get("admin_graphql_api_id"),
+                    "zoho_item_id": None,
+                    "diff_count": 1,
+                    "payload": payload,
+                    "reason": "missing_zoho_id_in_items_per_store",
+                })
+
+                _log(f"🗄️ Archivando en Shopify (sin zoho_id) | product_id={shopify_doc.get('id')} | link_index={i}")
                 continue
 
             if not shopify_doc:
@@ -840,11 +868,68 @@ class INVENTORY_AUTOMATIZATION:
                 "payload": payload,
             })
 
+        # =========================================================
+        # 2) EXTRA: Archivar productos que están en Shopify (store_items)
+        #    pero NO están listados en items_per_store (bridge_items)
+        # =========================================================
+
+        bridge_shopify_ids = {
+            self._safe_str(x.get("shopify_id"))
+            for x in bridge_items
+            if self._safe_str(x.get("shopify_id"))
+        }
+
+        store_shopify_ids = set(shopify_by_id.keys())  # ya son str(id)
+
+        not_listed_shopify_ids = store_shopify_ids - bridge_shopify_ids
+
+        
+
+        for shopify_id in sorted(not_listed_shopify_ids):
+            shopify_doc = shopify_by_id.get(shopify_id)
+
+            if not shopify_doc:
+                missing_shopify.append(shopify_id)
+                _log(f"⚠️ No encontré shopify_doc para product_id={shopify_id} (not_listed)")
+                continue
+
+            current_status = (shopify_doc.get("status") or "").lower()
+            if current_status == "archived":
+                _log(f"✅ Ya estaba archived | product_id={shopify_doc.get('id')} (not_listed)")
+                continue
+
+            payload = {
+                "product": {
+                    "id": shopify_doc.get("id"),
+                    "status": "archived",
+                }
+            }
+
+            update_bodies.append({
+                "shopify_product_id": shopify_doc.get("id"),
+                "shopify_admin_graphql_api_id": shopify_doc.get("admin_graphql_api_id"),
+                "zoho_item_id": None,
+                "diff_count": 1,
+                "payload": payload,
+                "reason": "not_listed_in_items_per_store",
+            })
+
+            not_listed_archives += 1
+            _log(f"🗄️ Archivando en Shopify (no listado en items_per_store) | product_id={shopify_doc.get('id')}")
+
         # resumen final
-        _log(f"🔎 Resumen {store}: update_bodies={len(update_bodies)} | broken_links={broken_links} | missing_zoho={len(missing_zoho)} | missing_shopify={len(missing_shopify)} | bad_templates={bad_templates}")
+        _log(
+        f"🔎 Resumen {store}: update_bodies={len(update_bodies)} | "
+        f"broken_links={broken_links} | missing_zoho={len(missing_zoho)} | "
+        f"missing_shopify={len(missing_shopify)} | bad_templates={bad_templates} | "
+        f"not_listed_archives={not_listed_archives}"
+        )
 
         # ✅ esto alimenta products_to_update
         return update_bodies
+    
+
+    
     ####################################    
     ## SECCIÓN PARA CREAR INVENTARIO ##
     ################################### 
