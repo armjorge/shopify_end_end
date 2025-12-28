@@ -19,6 +19,9 @@ from colorama import init, Fore, Style
 import re, ast
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from datetime import datetime
+from typing import Any, Dict, List, Optional, Tuple
+import time
+from datetime import datetime, timezone
 
 
 class INVENTORY_AUTOMATIZATION:
@@ -83,8 +86,6 @@ class INVENTORY_AUTOMATIZATION:
             escaped = False
 
         return "".join(out)
-
-
 
     def _template_to_schema(self, template: str) -> dict:
         """
@@ -174,8 +175,6 @@ class INVENTORY_AUTOMATIZATION:
         """
         schema = self._template_to_schema(template)
         return self._filter_by_schema(data_dict, schema, keep_missing=keep_missing)  
-
-
 
 
     def _template_str_to_dict(self, template: str, data_dict: dict) -> dict:
@@ -503,6 +502,7 @@ class INVENTORY_AUTOMATIZATION:
             return node
 
         return _norm_any(d)
+
     def send_workload_to_shopify_api(self, products_to_update: list[dict], store: str, logger=None) -> list[dict]:
         """
         products_to_update: lista como la que ya generas:
@@ -929,10 +929,10 @@ class INVENTORY_AUTOMATIZATION:
         return update_bodies
     
 
-    
-    ####################################    
+    ###################################    
     ## SECCIÓN PARA CREAR INVENTARIO ##
-    ################################### 
+    ###################################
+ 
     def shopify_create_items(self, store: str, logger=None):
         def _log(msg: str):
             if callable(logger):
@@ -1024,9 +1024,501 @@ class INVENTORY_AUTOMATIZATION:
 
         _log(f"🎉 Creación terminada. Links actualizados: {updated}/{len(results)}")
         return results
-                
-
+    
     def run_inventory_sync(self, store: str, logger=None):
+        def _log(msg: str):
+            if callable(logger):
+                logger(str(msg))
+            else:
+                print(str(msg))
+
+        _log(f"📦 Sincronizando inventario para {store}...")
+
+        # --- location_id mapping (simplified)
+        location_map = {
+            "managed_store_one": 108620087615,
+            "managed_store_two": 80329703512,
+        }
+        location_id = location_map.get(store)
+        if location_id is None:
+            raise ValueError(
+                f"No tengo location_id para store='{store}'. "
+                f"Stores válidos: {list(location_map.keys())}"
+            )
+
+        # --- resolve Shopify config (based on YOUR YAML)
+        if not isinstance(self.data, dict):
+            raise TypeError(f"self.data debe ser dict, recibí: {type(self.data)}")
+
+        store_conf = self.data.get(store)
+        if not isinstance(store_conf, dict):
+            raise KeyError(
+                f"No encontré config dict para store='{store}' en self.data. "
+                f"Keys disponibles: {list(self.data.keys())}"
+            )
+
+        token = store_conf.get("access_token")
+        api_version = store_conf.get("api_version", "2024-10")
+        store_name = store_conf.get("store_name")
+        if not token or not store_name:
+            raise ValueError(
+                f"Config incompleta para store='{store}'. Requerido: access_token, store_name. "
+                f"Recibí keys: {list(store_conf.keys())}"
+            )
+
+        base = store_name.strip()
+        if not base.startswith("http"):
+            base = "https://" + base
+        base = base.rstrip("/")
+
+        endpoint_set = f"{base}/admin/api/{api_version}/inventory_levels/set.json"
+
+        headers = store_conf.get("headers")
+        if not isinstance(headers, dict) or not headers:
+            headers = {
+                "Content-Type": "application/json",
+                "X-Shopify-Access-Token": token,
+            }
+        else:
+            headers = dict(headers)
+            headers["X-Shopify-Access-Token"] = token
+            headers.setdefault("Content-Type", "application/json")
+
+        # --- Mongo
+        mongo_db_url = self.data["non_sql_database"]["url"]
+        client = MongoClient(mongo_db_url)
+
+        zoho_db = client["Zoho_Inventory"]
+        store_db = client[store]
+
+        col_items_per_store = zoho_db["items_per_store"]
+        col_zoho_items = zoho_db["items"]
+        col_shopify_products = store_db["products"]
+        col_inventory_levels = store_db["inventory_levels"]
+        now_iso = datetime.now(timezone.utc).isoformat()
+        # =========================
+        # 1) Getting zoho item_id - shopify_id pair
+        # =========================
+        _log("🔎 Step: Getting zoho item_id - shopify_id pair")
+
+        link_doc = col_items_per_store.find_one({"store": store}, {"items": 1})
+        if not link_doc or not link_doc.get("items"):
+            _log(f"⚠️ No encontré Zoho_Inventory.items_per_store para store='{store}' o está vacío.")
+            return
+
+        item_to_shopify = {}
+        invalid_links = 0
+
+        for it in link_doc["items"]:
+            item_id = it.get("item_id")
+            shopify_id = it.get("shopify_id")
+
+            if item_id is None or shopify_id is None:
+                invalid_links += 1
+                continue
+
+            item_id = str(item_id)
+
+            # shopify_id might come like {"$numberLong": "..."}
+            if isinstance(shopify_id, dict) and "$numberLong" in shopify_id:
+                try:
+                    shopify_id = int(shopify_id["$numberLong"])
+                except Exception:
+                    invalid_links += 1
+                    continue
+            else:
+                try:
+                    shopify_id = int(shopify_id)
+                except Exception:
+                    invalid_links += 1
+                    continue
+
+            item_to_shopify[item_id] = shopify_id
+
+        _log(f"   ✅ pairs_ok={len(item_to_shopify)} invalid_links={invalid_links}")
+
+        if not item_to_shopify:
+            _log("⚠️ items_per_store existe pero no pude extraer item_id/shopify_id válidos.")
+            return
+
+        item_ids = list(item_to_shopify.keys())
+        shopify_product_ids = list(set(item_to_shopify.values()))
+
+        # =========================
+        # 2) Getting zoho items for listed shopify items at {store}
+        # =========================
+        _log(f"🔎 Step: Getting zoho items for listed shopify items at {store}")
+
+        item_to_stock = {}
+        zoho_found = 0
+        for doc in col_zoho_items.find(
+            {"item_id": {"$in": item_ids}},
+            {"item_id": 1, "actual_available_stock": 1, "available_stock": 1},
+        ):
+            zoho_found += 1
+            iid = str(doc.get("item_id"))
+            stock = doc.get("actual_available_stock", None)
+            if stock is None:
+                stock = doc.get("available_stock", 0)
+
+            try:
+                item_to_stock[iid] = int(stock)
+            except Exception:
+                item_to_stock[iid] = 0
+
+        missing_zoho_items = [iid for iid in item_ids if iid not in item_to_stock]
+        _log(f"   ✅ zoho_docs_found={zoho_found} missing_zoho_items={len(missing_zoho_items)}")
+        if missing_zoho_items:
+            _log(f"   ⚠️ sample missing item_ids: {missing_zoho_items[:5]}")
+
+        # =========================
+        # 3) Getting shopify products (to obtain inventory_item_id)
+        # =========================
+        _log(f"🔎 Step: Getting shopify products for the listed shopify items at {store}")
+
+        pid_to_inv_item = {}
+        products_found = 0
+        products_missing_variant_inv = 0
+
+        for p in col_shopify_products.find(
+            {"id": {"$in": shopify_product_ids}},
+            {"id": 1, "variants.inventory_item_id": 1},
+        ):
+            products_found += 1
+
+            pid = p.get("id")
+            try:
+                pid = int(pid) if not (isinstance(pid, dict) and "$numberLong" in pid) else int(pid["$numberLong"])
+            except Exception:
+                continue
+
+            variants = p.get("variants") or []
+            if not variants or not isinstance(variants, list):
+                products_missing_variant_inv += 1
+                continue
+
+            inv_item_id = variants[0].get("inventory_item_id")
+            if inv_item_id is None:
+                products_missing_variant_inv += 1
+                continue
+
+            if isinstance(inv_item_id, dict) and "$numberLong" in inv_item_id:
+                try:
+                    inv_item_id = int(inv_item_id["$numberLong"])
+                except Exception:
+                    products_missing_variant_inv += 1
+                    continue
+            else:
+                try:
+                    inv_item_id = int(inv_item_id)
+                except Exception:
+                    products_missing_variant_inv += 1
+                    continue
+
+            pid_to_inv_item[pid] = inv_item_id
+
+        missing_products = [pid for pid in shopify_product_ids if pid not in pid_to_inv_item]
+        _log(f"   ✅ shopify_products_found={products_found} inv_item_extracted={len(pid_to_inv_item)} missing_inv_item={len(missing_products)}")
+        if missing_products:
+            _log(f"   ⚠️ sample missing shopify product ids: {missing_products[:5]}")
+
+        # =========================
+        # 4) Building templates
+        # =========================
+        _log("🔎 Step: Building templates")
+
+        desired = {}  # inventory_item_id -> desired_qty
+        missing_inv_item_links = 0
+        for item_id, pid in item_to_shopify.items():
+            inv_item_id = pid_to_inv_item.get(pid)
+            if not inv_item_id:
+                missing_inv_item_links += 1
+                continue
+            qty = item_to_stock.get(item_id, 0)
+            desired[inv_item_id] = int(qty)
+
+        _log(f"   ✅ templates_built={len(desired)} missing_inv_item_links={missing_inv_item_links}")
+        if desired:
+            # show 3 examples
+            sample = list(desired.items())[:3]
+            _log(f"   🧪 sample templates (inv_item_id -> qty): {sample}")
+
+        if not desired:
+            _log("⚠️ No hay templates que construir (desired vacío).")
+            return
+
+        inv_item_ids = list(desired.keys())
+
+        # =========================
+        # 5) Getting shopify inventory_levels for the listed shopify items at {store}
+        # =========================
+        _log(f"🔎 Step: Getting shopify inventory_levels for the listed shopify items at {store} (Mongo cache)")
+
+        current = {}  # inventory_item_id -> available
+        levels_found = 0
+
+        for lvl in col_inventory_levels.find(
+            {"location_id": int(location_id), "inventory_item_id": {"$in": inv_item_ids}},
+            {"inventory_item_id": 1, "location_id": 1, "available": 1},
+        ):
+            levels_found += 1
+            inv_item_id = lvl.get("inventory_item_id")
+
+            if isinstance(inv_item_id, dict) and "$numberLong" in inv_item_id:
+                try:
+                    inv_item_id = int(inv_item_id["$numberLong"])
+                except Exception:
+                    continue
+            else:
+                try:
+                    inv_item_id = int(inv_item_id)
+                except Exception:
+                    continue
+
+            try:
+                current[inv_item_id] = int(lvl.get("available", 0))
+            except Exception:
+                current[inv_item_id] = 0
+
+        _log(f"   ✅ inventory_levels_found={levels_found} current_indexed={len(current)}")
+        if levels_found == 0:
+            _log("   ⚠️ Ojo: tu cache inventory_levels está vacío para ese location_id. Eso haría que TODO parezca 'to_create'.")
+
+        # =========================
+        # 6) Comparing both data + Building inventory_level-like payloads
+        # =========================
+        _log("🔎 Step: Comparing both data")
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        to_create = []
+        to_update = []
+        no_change = []
+
+        for inv_item_id, desired_qty in desired.items():
+            cur_qty = current.get(inv_item_id)  # Shopify-reported (from Mongo cache)
+
+            payload = {
+                "inventory_item_id": int(inv_item_id),
+                "location_id": int(location_id),
+                "available": int(desired_qty),  # Zoho desired
+            }
+
+            if cur_qty is None:
+                # Shopify inventory level not found (in your cache) for this location
+                to_create.append(payload)
+            else:
+                # Compare Shopify vs Zoho
+                if int(cur_qty) == int(desired_qty):
+                    no_change.append(payload)
+                else:
+                    to_update.append(payload)
+
+        _log(
+            f"   ✅ compare_results: "
+            f"to_create={len(to_create)} "
+            f"to_update={len(to_update)} "
+            f"no_change={len(no_change)}"
+        )
+
+        if to_create:
+            _log(f"   🧪 sample to_create payloads: {to_create[:2]}")
+        if to_update:
+            _log(f"   🧪 sample to_update payloads: {to_update[:2]}")
+        if no_change:
+            _log(f"   🧪 sample no_change payloads: {no_change[:2]}")
+        pprint(to_update)
+        # =========================
+        # Send to Shopify GraphQL
+        # =========================
+        graphql_endpoint = f"{base}/admin/api/{api_version}/graphql.json"
+
+        mutation_set = """
+        mutation InventorySet($input: InventorySetQuantitiesInput!) {
+        inventorySetQuantities(input: $input) {
+            inventoryAdjustmentGroup {
+            reason
+            changes { name delta }
+            }
+            userErrors { field message }
+        }
+        }
+        """
+
+        # We'll verify "available" after each batch
+        # NOTE: quantities(names:["available"]) returns the current value at that location.  [oai_citation:1‡Shopify](https://shopify.dev/docs/api/admin-graphql/latest/queries/inventoryLevel)
+        BATCH_SIZE = 50
+        location_gid = f"gid://shopify/Location/{int(location_id)}"
+
+        ok_count = 0
+        mismatch_count = 0
+        error_batches = 0
+
+        for i in range(0, len(to_update), BATCH_SIZE):
+            batch = to_update[i:i + BATCH_SIZE]
+
+            # --- 1) Send mutation
+            quantities = [
+                {
+                    "inventoryItemId": f"gid://shopify/InventoryItem/{int(d['inventory_item_id'])}",
+                    "locationId": location_gid,
+                    "quantity": int(d["available"]),
+                }
+                for d in batch
+            ]
+
+            variables = {
+                "input": {
+                    "name": "available",
+                    "reason": "correction",
+                    "ignoreCompareQuantity": True,
+                    "quantities": quantities,
+                }
+            }
+
+            resp = requests.post(
+                graphql_endpoint,
+                headers=headers,
+                json={"query": mutation_set, "variables": variables},
+                timeout=60
+            )
+            resp.raise_for_status()
+            j = resp.json()
+
+            user_errors = (
+                j.get("data", {})
+                .get("inventorySetQuantities", {})
+                .get("userErrors", [])
+            )
+            if user_errors:
+                error_batches += 1
+                _log(f"❌ Set batch {(i//BATCH_SIZE)+1}: userErrors={user_errors}")
+                # You can continue or stop; I continue so you see all errors
+                continue
+
+            _log(f"✅ Set batch {(i//BATCH_SIZE)+1}: sent {len(batch)} quantities")
+
+            # --- 2) Verify by querying inventoryItem.inventoryLevel(locationId).  [oai_citation:2‡Shopify](https://shopify.dev/docs/api/admin-graphql/latest/queries/inventoryItem?utm_source=chatgpt.com)
+            # Build a single query with aliases i0, i1, ... so we verify the whole batch in one call.
+            desired_by_gid = {f"gid://shopify/InventoryItem/{int(d['inventory_item_id'])}": int(d["available"]) for d in batch}
+
+            # We’ll allow a tiny retry in case of short propagation delay
+            verified = False
+            last_result = None
+
+            for attempt in range(1, 4):
+                parts = []
+                for idx, inv_gid in enumerate(desired_by_gid.keys()):
+                    parts.append(f'''
+                    i{idx}: inventoryItem(id: "{inv_gid}") {{
+                        id
+                        inventoryLevel(locationId: "{location_gid}") {{
+                        updatedAt
+                        quantities(names: ["available"]) {{
+                            name
+                            quantity
+                        }}
+                        }}
+                    }}
+                    ''')
+
+                query_verify = "query VerifyBatch {\n" + "\n".join(parts) + "\n}"
+
+                vresp = requests.post(
+                    graphql_endpoint,
+                    headers=headers,
+                    json={"query": query_verify},
+                    timeout=60
+                )
+                vresp.raise_for_status()
+                vj = vresp.json()
+                last_result = vj
+
+                data = vj.get("data", {}) if isinstance(vj, dict) else {}
+                # If data is empty, retry
+                if not data:
+                    time.sleep(1 * attempt)
+                    continue
+
+                # Compare results
+                mismatches = []
+                null_levels = []
+                matches = 0
+
+                for idx, inv_gid in enumerate(desired_by_gid.keys()):
+                    node = data.get(f"i{idx}")
+                    if not node:
+                        mismatches.append((inv_gid, "missing_node", desired_by_gid[inv_gid]))
+                        continue
+
+                    lvl = node.get("inventoryLevel")
+                    if lvl is None:
+                        # This usually means not stocked/activated at that location -> you may need inventoryActivate.  [oai_citation:3‡Shopify](https://shopify.dev/docs/api/admin-graphql/latest/objects/InventoryLevel)
+                        null_levels.append(inv_gid)
+                        continue
+
+                    q_list = lvl.get("quantities") or []
+                    # find "available"
+                    got = None
+                    for q in q_list:
+                        if q.get("name") == "available":
+                            got = q.get("quantity")
+                            break
+
+                    want = desired_by_gid[inv_gid]
+                    if got is None:
+                        mismatches.append((inv_gid, "missing_available", want))
+                    elif int(got) == int(want):
+                        matches += 1
+                    else:
+                        mismatches.append((inv_gid, int(got), want))
+
+                if null_levels:
+                    _log(f"⚠️ Verify batch {(i//BATCH_SIZE)+1}: {len(null_levels)} items returned inventoryLevel=null (likely not activated at this location).")
+
+                if mismatches:
+                    # retry a bit (sometimes values lag for a second)
+                    time.sleep(1 * attempt)
+                    continue
+
+                # all good
+                verified = True
+                ok_count += matches
+                _log(f"✅ Verify batch {(i//BATCH_SIZE)+1}: ok={matches}/{len(batch)}")
+                break
+
+            if not verified:
+                # On last attempt, report mismatches (small sample)
+                mismatch_count += len(batch)
+                _log(f"❌ Verify batch {(i//BATCH_SIZE)+1}: mismatches remain after retries. Sample:")
+                # Print at most 5 mismatches so logs are readable
+                try:
+                    # Recompute mismatches from last_result for printing (quick & safe)
+                    data = (last_result or {}).get("data", {})
+                    shown = 0
+                    for idx, inv_gid in enumerate(desired_by_gid.keys()):
+                        if shown >= 5:
+                            break
+                        node = data.get(f"i{idx}", {})
+                        lvl = node.get("inventoryLevel")
+                        want = desired_by_gid[inv_gid]
+                        if lvl is None:
+                            _log(f"   - {inv_gid}: inventoryLevel=null, want={want}")
+                            shown += 1
+                            continue
+                        got = None
+                        for q in (lvl.get("quantities") or []):
+                            if q.get("name") == "available":
+                                got = q.get("quantity")
+                                break
+                        _log(f"   - {inv_gid}: got={got} want={want}")
+                        shown += 1
+                except Exception:
+                    pass
+
+        _log(f"🏁 Done: verified_ok≈{ok_count}, verify_failed_batches={error_batches}, verify_failed_items≈{mismatch_count}")    
+        
+    def run_product_sync(self, store: str, logger=None):
         """
         Orquesta:
         1) Construir payloads de creación/actualización/desactivación.
@@ -1139,3 +1631,4 @@ if __name__ == "__main__":
         #shopify_management = SHOPIFY_MONGODB(self.working_folder, self.data, store)
         #shopify_management.sync_shopify_to_mongo()        
         app.run_inventory_sync(store)
+        #app.run_product_sync(store)

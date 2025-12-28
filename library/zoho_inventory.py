@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 
 class ZOHO_INVENTORY:
+    
     def __init__(self, working_folder, yaml_data, store=None):
         init(autoreset=True)
         print(Fore.BLUE + "\tInicializando ZOHO_INVENTORY"+ Style.RESET_ALL)

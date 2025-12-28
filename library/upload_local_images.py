@@ -11,7 +11,7 @@ import yaml
 import sys
 import unicodedata
 import shutil
-
+import mimetypes
 
 
 class SHOPIFY_IMAGES: 
@@ -271,15 +271,26 @@ class SHOPIFY_IMAGES:
         print("👉 Agrega imágenes a las carpetas correspondientes y vuelve a ejecutar la sincronización local → mongo_db.")
     # ================== CASO 2 y 3: LOCAL → MONGO_DB ==================
 
+    def _content_type_from_ext(self, ext: str) -> str:
+        ext = (ext or "").lower()
+        if ext in (".jpg", ".jpeg"):
+            return "image/jpeg"
+        if ext == ".png":
+            return "image/png"
+        # fallback
+        return mimetypes.types_map.get(ext, "application/octet-stream")
+
+
     def load_images_to_mongo(self):
         """
-        Local → MongoDB:
+        Local → MongoDB (sin resize, sin conversión):
         - Recorre subcarpetas en BASE_IMAGES_FOLDER.
-        - Para cada item_id detectado en el nombre de carpeta:
-            - Lee imágenes válidas.
-            - Reescala y convierte a JPEG.
-            - Guarda/actualiza documento en management.product_images
-              *reemplazando* el arreglo de imágenes existente.
+        - Para cada item_id:
+            - Lee el archivo tal cual (bytes originales).
+            - Guarda attachment base64.
+            - content_type según extensión.
+            - width/height leyendo la imagen (sin modificarla).
+            - Reemplaza el arreglo de imágenes completo.
         """
         base_folder = self.BASE_IMAGES_FOLDER
         client = self._get_mongo_client()
@@ -324,20 +335,30 @@ class SHOPIFY_IMAGES:
                     continue
 
                 file_path = os.path.join(folder_path, filename)
-                print(f"  🖼️ Reescalando {filename}...")
+                print(f"  🖼️ Leyendo {filename} (sin resize/convert)...")
 
-                img_bytes, width, height = self.resize_image_to_max(file_path)
+                # bytes originales
+                with open(file_path, "rb") as f:
+                    raw_bytes = f.read()
 
-                b64_str = base64.b64encode(img_bytes).decode("ascii")
+                # dimensiones SIN modificar
+                try:
+                    with Image.open(file_path) as im:
+                        width, height = im.size
+                except Exception:
+                    width, height = None, None  # por si hubiera un archivo dañado
+
+                b64_str = base64.b64encode(raw_bytes).decode("ascii")
+                content_type = self._content_type_from_ext(ext)
 
                 images_docs.append({
                     "filename": filename,
                     "attachment": b64_str,
-                    "content_type": "image/jpeg",  # normalizamos a jpeg
+                    "content_type": content_type,   # ✅ ya no forzamos jpeg
                     "width": width,
                     "height": height,
                     "position": position,
-                    "alt": filename,  # luego lo puedes mejorar
+                    "alt": filename,
                     "created_at": datetime.utcnow(),
                 })
                 position += 1
@@ -346,13 +367,12 @@ class SHOPIFY_IMAGES:
                 print(f"  ⚠️ No se encontraron imágenes válidas en {folder}")
                 continue
 
-            # Upsert del documento por item_id
             result = coll.update_one(
                 {"item_id": item_id},
                 {
                     "$set": {
                         "item_id": item_id,
-                        "images": images_docs,  # 🔁 Reemplaza TODAS las imágenes previas
+                        "images": images_docs,  # 🔁 reemplaza todo
                         "updated_at": datetime.utcnow(),
                     }
                 },
@@ -363,7 +383,6 @@ class SHOPIFY_IMAGES:
                 print(f"  ✅ Insertado documento nuevo para item_id={item_id}")
             else:
                 print(f"  🔁 Actualizado documento existente para item_id={item_id} (imágenes reemplazadas)")
-
     # ================== CASO 3: MONGO_DB → LOCAL ==================
 
     def mongo_to_local(self):
