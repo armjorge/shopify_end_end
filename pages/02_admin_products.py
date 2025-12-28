@@ -404,7 +404,7 @@ if st.button("Sincronizar Zoho y Shopify", use_container_width=True, key="btn_fu
     st.subheader("1️⃣ Zoho Inventory → Base interna")
     with st.spinner("Sincronizando Zoho Inventory con la base interna..."):
         zoho_inventory = ZOHO_INVENTORY(working_folder, yaml_data)
-        zoho_summary = zoho_inventory.sync_zoho_inventory_to_mongo(logger=streamlit_logger)
+        zoho_summary = zoho_inventory.sync_zoho_inventory_to_mongo(logger=streamlit_logger, needed_endpoints = ['items'])
     st.success("✅ Zoho Inventory sincronizado con la base interna.")
     st.json(zoho_summary)
 
@@ -422,7 +422,7 @@ if st.button("Sincronizar Zoho y Shopify", use_container_width=True, key="btn_fu
             st.write(f"📥 Shopify → Base interna (estado inicial) para **{store}**...")
             shopify_sync = SHOPIFY_MONGODB(working_folder, yaml_data, store)
             shopify_sync_before[store] = shopify_sync.sync_shopify_to_mongo(
-                logger=streamlit_logger
+                logger=streamlit_logger, needed_endpoints= ['orders']
             )
         for store in stores:
             st.write(f"📥 Base interna con Zoho actualizado a -> Shopify para **{store}**...")
@@ -434,7 +434,7 @@ if st.button("Sincronizar Zoho y Shopify", use_container_width=True, key="btn_fu
             st.write(f"📥 Shopify → Base interna (estado final) para **{store}**...")
             shopify_sync = SHOPIFY_MONGODB(working_folder, yaml_data, store)
             shopify_sync_before[store] = shopify_sync.sync_shopify_to_mongo(
-                logger=streamlit_logger
+                logger=streamlit_logger, needed_endpoints= ['orders']
             )                    
          
     st.success("✅ Creación y actualización items por tienda Shopify completados.")

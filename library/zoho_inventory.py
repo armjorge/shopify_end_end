@@ -58,7 +58,7 @@ class ZOHO_INVENTORY:
             print(Fore.RED + f"⚠️ Error al refrescar token: {e}")
             return None
         
-    def sync_zoho_inventory_to_mongo(self, logger=None):
+    def sync_zoho_inventory_to_mongo(self, logger=None, needed_endpoints = None):
         """
         Consulta varios endpoints de Zoho Inventory y los sincroniza en MongoDB.
         - Crea la base de datos si no existe.
@@ -74,14 +74,13 @@ class ZOHO_INVENTORY:
             if callable(logger):
                 logger(str(msg))
 
-        crm_target = "Zoho Inventory"      # Nombre "humano"
-        db_name = crm_target.replace(" ", "_")  # Mongo no acepta espacios en el nombre de la DB
+        db_name = "Zoho_Inventory"
 
         zoho_conf = self.data["zoho"]
         mongo_db_url = self.data["non_sql_database"]["url"]
 
         # endpoint -> (primary_key, list_key_en_respuesta)
-        endpoints_zoho = {
+        full_endpoints_zoho = {
             "items": {
                 "pk": "item_id",
                 "list_key": "items"
@@ -103,6 +102,28 @@ class ZOHO_INVENTORY:
                 "list_key": "contacts"
             }
         }
+        full_keys = list(full_endpoints_zoho.keys())
+
+        if needed_endpoints is None:
+            endpoints_zoho = full_endpoints_zoho
+            chosen_keys = full_keys[:]   # todos
+        else:
+            # opcional: valida que no pidan endpoints inexistentes
+            invalid = [k for k in needed_endpoints if k not in full_endpoints_zoho]
+            if invalid:
+                raise ValueError(f"Endpoints inválidos: {invalid}. Válidos: {full_keys}")
+
+            endpoints_zoho = {k: full_endpoints_zoho[k] for k in needed_endpoints}
+            chosen_keys = list(endpoints_zoho.keys())
+
+        removed_keys = [k for k in full_keys if k not in chosen_keys]
+
+        print(
+            "🔎 Zoho endpoints | "
+            f"full={full_keys} | "
+            f"chosen={chosen_keys} | "
+            f"removed={removed_keys}"
+        )
 
         # Conexión a Mongo
         client = MongoClient(mongo_db_url)

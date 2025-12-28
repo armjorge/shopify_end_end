@@ -9,6 +9,8 @@ from colorama import init, Fore, Style
 from dotenv import load_dotenv
 import yaml
 import sys
+import unicodedata
+import shutil
 
 
 class SHOPIFY_IMAGES: 
@@ -25,7 +27,93 @@ class SHOPIFY_IMAGES:
 
     # ================== HELPERS ==================
 
-    def resize_image_to_max(self, image_path, max_size=1200):
+
+
+    def sanitize_name(self, raw: str, max_len: int = 60) -> str:
+        """
+        Sanitiza para nombre de carpeta cross-platform:
+        - Normaliza unicode (quita acentos)
+        - Remueve caracteres inválidos Windows/macOS
+        - Colapsa espacios/guiones bajos
+        - Evita trailing dots/spaces
+        - Limita longitud (solo para el nombre, no incluye item_id)
+        """
+        if not raw:
+            return ""
+
+        # 1) normalize unicode -> ascii
+        s = unicodedata.normalize("NFKD", str(raw))
+        s = s.encode("ascii", "ignore").decode("ascii")
+
+        # 2) remove invalid filesystem chars (Windows set + control chars)
+        s = re.sub(r'[<>:"/\\|?*\x00-\x1F]', " ", s)
+
+        # 3) collapse whitespace
+        s = re.sub(r"\s+", " ", s).strip()
+
+        # 4) replace spaces with underscore (opcional, consistente)
+        s = s.replace(" ", "_")
+
+        # 5) collapse multiple underscores
+        s = re.sub(r"_+", "_", s).strip("_")
+
+        # 6) Windows: folder names cannot end with dot/space
+        s = s.rstrip(". ").strip()
+
+        # 7) reserved device names (Windows)
+        reserved = {
+            "CON","PRN","AUX","NUL",
+            "COM1","COM2","COM3","COM4","COM5","COM6","COM7","COM8","COM9",
+            "LPT1","LPT2","LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9",
+        }
+        if s.upper() in reserved:
+            s = f"{s}_item"
+
+        # 8) enforce max length
+        if max_len and len(s) > max_len:
+            s = s[:max_len].rstrip("_").rstrip(". ")
+
+        return s
+
+
+    def _get_zoho_item_name_by_id(self, client, item_id: str) -> str:
+        zoho_db = client["Zoho_Inventory"]
+        items_coll = zoho_db["items"]
+        doc = items_coll.find_one({"item_id": item_id}, {"name": 1, "item_name": 1})
+        if not doc:
+            return ""
+        return (doc.get("name") or doc.get("item_name") or "").strip()
+
+
+    def _desired_folder_name(self, client, item_id: str) -> str:
+        raw_name = self._get_zoho_item_name_by_id(client, item_id)
+        clean = self.sanitize_name(raw_name, max_len=60)  # ajusta a gusto
+        if not clean:
+            clean = "unnamed"
+        return f"{item_id}_{clean}"
+
+
+    def _find_candidate_folders(self, base_folder: str, item_id: str):
+        """
+        Devuelve lista de carpetas (nombres) que "pertenecen" a ese item_id.
+        Existencia se determina SOLO por item_id:
+        - exact match: item_id
+        - prefix match: item_id + "_"
+        """
+        out = []
+        if not os.path.exists(base_folder):
+            return out
+
+        for f in os.listdir(base_folder):
+            p = os.path.join(base_folder, f)
+            if not os.path.isdir(p):
+                continue
+            if f == item_id or f.startswith(item_id + "_"):
+                out.append(f)
+
+        # orden estable (para que merge sea determinista)
+        return sorted(out)
+    def resize_image_to_max(self, image_path, max_size=300):
         """
         Abre una imagen, la reescala manteniendo proporción
         para que el lado más grande sea max_size (px).
@@ -55,24 +143,6 @@ class SHOPIFY_IMAGES:
                 return folder_name.split(sep)[0]
         return folder_name  # si no tiene separador, usamos todo
 
-    def sanitize_name(self, name: str) -> str:
-        """
-        Limpia el 'name' para usarlo en nombres de carpetas:
-        - Quita espacios extra.
-        - Reemplaza caracteres no alfanuméricos por '_'.
-        - Colapsa múltiples '_' seguidos.
-        - Limita longitud.
-        """
-        if not name:
-            return ""
-        name = name.strip()
-        # Reemplazar caracteres raros por '_'
-        name = re.sub(r"[^A-Za-z0-9]+", "_", name)
-        # Quitar '_' al inicio/fin y colapsar múltiples
-        name = re.sub(r"_+", "_", name).strip("_")
-        # Limitar longitud razonable
-        return name[:60]
-
     def _get_mongo_client(self) -> MongoClient:
         mongo_url = self.data["non_sql_database"]["url"]
         return MongoClient(mongo_url)
@@ -80,43 +150,90 @@ class SHOPIFY_IMAGES:
     # ================== CASO 1: PRIMERA VEZ ==================
 
     def prepare_image_folders_from_zoho(self):
-        """
-        Primera vez:
-        - Crea carpeta BASE_IMAGES_FOLDER si no existe.
-        - Obtiene item_id y name de Zoho_Inventory.items (status='active').
-        - Genera subcarpetas: item_id + '_' + nombre_sanitizado.
-        - Sugiere al usuario agregar imágenes y volver.
-        """
         client = self._get_mongo_client()
         zoho_db = client["Zoho_Inventory"]
         items_coll = zoho_db["items"]
 
         os.makedirs(self.BASE_IMAGES_FOLDER, exist_ok=True)
 
-        # Solo items activos
-        cursor = items_coll.find({"status": "active"})
-        count = 0
+        cursor = items_coll.find({"status": "active"}, {"item_id": 1})
+        created = 0
+        renamed = 0
+        merged = 0
+        skipped = 0
 
-        print("\n🧱 Generando estructura de carpetas para imágenes desde Zoho_Inventory.items...")
+        print("\n🧱 Generando/normalizando estructura de carpetas para imágenes desde Zoho_Inventory.items...")
+
         for doc in cursor:
             item_id = str(doc.get("item_id") or "").strip()
             if not item_id:
                 continue
 
-            raw_name = doc.get("name") or doc.get("item_name") or ""
-            clean_name = self.sanitize_name(raw_name)
-            if clean_name:
-                folder_name = f"{item_id}_{clean_name}"
-            else:
-                folder_name = item_id
+            desired = self._desired_folder_name(client, item_id)
+            desired_path = os.path.join(self.BASE_IMAGES_FOLDER, desired)
 
-            folder_path = os.path.join(self.BASE_IMAGES_FOLDER, folder_name)
-            os.makedirs(folder_path, exist_ok=True)
-            count += 1
+            candidates = self._find_candidate_folders(self.BASE_IMAGES_FOLDER, item_id)
 
-        print(f"✅ Se crearon/aseguraron {count} carpetas en: {self.BASE_IMAGES_FOLDER}")
+            # Caso: no hay nada => crear
+            if not candidates:
+                os.makedirs(desired_path, exist_ok=True)
+                created += 1
+                continue
+
+            # Si ya existe la deseada, ok (pero si hay extras, mergearlos)
+            if desired in candidates:
+                # merge extras -> desired
+                extras = [c for c in candidates if c != desired]
+                for old in extras:
+                    old_path = os.path.join(self.BASE_IMAGES_FOLDER, old)
+                    if os.path.isdir(old_path):
+                        for fname in os.listdir(old_path):
+                            src = os.path.join(old_path, fname)
+                            dst = os.path.join(desired_path, fname)
+                            if os.path.isfile(src):
+                                # si existe mismo nombre, no lo pisamos: lo versionamos
+                                if os.path.exists(dst):
+                                    root, ext = os.path.splitext(fname)
+                                    dst = os.path.join(desired_path, f"{root}__dup{ext}")
+                                shutil.move(src, dst)
+                        # intenta borrar si quedó vacía
+                        try:
+                            os.rmdir(old_path)
+                        except OSError:
+                            pass
+                        merged += 1
+                continue
+
+            # Si hay un candidato (ej. item_id solo, o item_id_otro) => renombrar/merge
+            # Nota: si hay varios candidatos y ninguno es desired, mergeamos todo hacia desired.
+            os.makedirs(desired_path, exist_ok=True)
+
+            for old in candidates:
+                old_path = os.path.join(self.BASE_IMAGES_FOLDER, old)
+                if not os.path.isdir(old_path):
+                    continue
+
+                # mover contenido hacia desired
+                for fname in os.listdir(old_path):
+                    src = os.path.join(old_path, fname)
+                    dst = os.path.join(desired_path, fname)
+                    if os.path.isfile(src):
+                        if os.path.exists(dst):
+                            root, ext = os.path.splitext(fname)
+                            dst = os.path.join(desired_path, f"{root}__dup{ext}")
+                        shutil.move(src, dst)
+
+                # borrar carpeta vieja si queda vacía
+                try:
+                    os.rmdir(old_path)
+                    renamed += 1
+                except OSError:
+                    # no estaba vacía o algo raro
+                    skipped += 1
+
+        print(f"✅ Carpetas creadas: {created} | renombradas/absorbidas: {renamed} | merges extra: {merged} | skips: {skipped}")
+        print(f"📁 Base: {self.BASE_IMAGES_FOLDER}")
         print("👉 Agrega imágenes a las carpetas correspondientes y vuelve a ejecutar la sincronización local → mongo_db.")
-
     # ================== CASO 2 y 3: LOCAL → MONGO_DB ==================
 
     def load_images_to_mongo(self):
@@ -215,46 +332,80 @@ class SHOPIFY_IMAGES:
     # ================== CASO 3: MONGO_DB → LOCAL ==================
 
     def mongo_to_local(self):
-        """
-        MongoDB → Local:
-        - Lee management.product_images.
-        - Para cada item_id:
-            - Busca una carpeta cuyo nombre comience con item_id.
-              Si no existe, crea una.
-            - Borra TODAS las imágenes actuales de esa carpeta.
-            - Escribe las nuevas imágenes decodificando el base64.
-        """
         base_folder = self.BASE_IMAGES_FOLDER
         client = self._get_mongo_client()
-        db = client["management"]
-        coll = db["product_images"]
+
+        mgmt_db = client["management"]
+        coll = mgmt_db["product_images"]
+
+        zoho_db = client["Zoho_Inventory"]
+        items_coll = zoho_db["items"]
 
         os.makedirs(base_folder, exist_ok=True)
 
-        docs = list(coll.find({}))
+        docs = list(coll.find({}, {"item_id": 1, "images": 1}))
         if not docs:
             print("⚠️ No hay documentos en management.product_images para sincronizar hacia local.")
             return
 
         print(f"\n🖼️ Sincronizando imágenes desde MongoDB → carpetas locales en {base_folder}...")
 
+        # Para saber qué ya está en Mongo (con o sin imágenes)
+        mongo_item_ids = set()
+        wrote_images = 0
+        empty_docs = 0
+
         for doc in docs:
             item_id = str(doc.get("item_id") or "").strip()
             if not item_id:
                 continue
 
-            # Buscar carpeta existente que empiece con item_id
-            candidate_folder = None
-            for folder in os.listdir(base_folder):
-                folder_path = os.path.join(base_folder, folder)
-                if os.path.isdir(folder_path) and folder.startswith(item_id):
-                    candidate_folder = folder_path
-                    break
+            mongo_item_ids.add(item_id)
 
-            if candidate_folder is None:
-                # Si no existe, creamos carpeta simple con item_id
-                candidate_folder = os.path.join(base_folder, item_id)
+            # Buscar carpeta existente que empiece con item_id (exact o prefix)
+            candidates = self._find_candidate_folders(base_folder, item_id)
+
+            if candidates:
+                # preferimos la que ya esté normalizada (tiene "_")
+                chosen = None
+                for c in candidates:
+                    if c.startswith(item_id + "_"):
+                        chosen = c
+                        break
+                if chosen is None:
+                    chosen = candidates[0]
+                candidate_folder = os.path.join(base_folder, chosen)
+            else:
+                # crear carpeta estándar con nombre desde Zoho
+                desired = self._desired_folder_name(client, item_id)
+                candidate_folder = os.path.join(base_folder, desired)
                 os.makedirs(candidate_folder, exist_ok=True)
+
+            # (Opcional pero útil) si la carpeta elegida no es la "desired", normaliza/mergea
+            # para que siempre quede item_id_{name}
+            try:
+                desired = self._desired_folder_name(client, item_id)
+                desired_path = os.path.join(base_folder, desired)
+                if os.path.basename(candidate_folder) != desired:
+                    # Crea destino y mueve contenido (sin borrar aún por si algo falla)
+                    os.makedirs(desired_path, exist_ok=True)
+                    for fname in os.listdir(candidate_folder):
+                        src = os.path.join(candidate_folder, fname)
+                        dst = os.path.join(desired_path, fname)
+                        if os.path.isfile(src):
+                            if os.path.exists(dst):
+                                root, ext = os.path.splitext(fname)
+                                dst = os.path.join(desired_path, f"{root}__dup{ext}")
+                            shutil.move(src, dst)
+                    # intenta borrar carpeta vieja si vacía
+                    try:
+                        os.rmdir(candidate_folder)
+                    except OSError:
+                        pass
+                    candidate_folder = desired_path
+            except Exception:
+                # si Zoho no tiene nombre o algo falla, dejamos candidate_folder como estaba
+                pass
 
             print(f"\n📂 item_id={item_id} → carpeta={candidate_folder}")
 
@@ -267,6 +418,7 @@ class SHOPIFY_IMAGES:
             images = doc.get("images", []) or []
             if not images:
                 print("  ⚠️ Documento sin imágenes, carpeta quedará vacía.")
+                empty_docs += 1
                 continue
 
             # Escribir nuevas imágenes
@@ -291,11 +443,80 @@ class SHOPIFY_IMAGES:
                     f.write(img_bytes)
 
                 print(f"  💾 Guardada imagen {filename}")
+                wrote_images += 1
+
+        # =======================
+        # NUEVO: crear carpetas vacías para Zoho items activos no presentes en Mongo
+        # =======================
+        print("\n📦 Creando carpetas vacías para items activos en Zoho que NO están en management.product_images...")
+
+        zoho_cursor = items_coll.find(
+            {"status": "active"},
+            {"item_id": 1}
+        )
+
+        created_empty = 0
+        already_had_folder = 0
+        skipped_no_id = 0
+
+        for it in zoho_cursor:
+            item_id = str(it.get("item_id") or "").strip()
+            if not item_id:
+                skipped_no_id += 1
+                continue
+
+            # Si ya está en Mongo, lo saltamos (ya se gestionó arriba)
+            if item_id in mongo_item_ids:
+                continue
+
+            # Si ya existe alguna carpeta por item_id (aunque sea vieja), la normalizamos al desired
+            candidates = self._find_candidate_folders(base_folder, item_id)
+            desired = self._desired_folder_name(client, item_id)
+            desired_path = os.path.join(base_folder, desired)
+
+            if not candidates:
+                os.makedirs(desired_path, exist_ok=True)
+                print(f"  📁 (vacía) creada: {desired}")
+                created_empty += 1
+                continue
+
+            # Existe algo: mergea todo hacia desired y deja la carpeta final vacía o con lo que hubiera
+            os.makedirs(desired_path, exist_ok=True)
+            moved_any = False
+
+            for old in candidates:
+                old_path = os.path.join(base_folder, old)
+                if old_path == desired_path:
+                    continue
+                for fname in os.listdir(old_path):
+                    src = os.path.join(old_path, fname)
+                    dst = os.path.join(desired_path, fname)
+                    if os.path.isfile(src):
+                        if os.path.exists(dst):
+                            root, ext = os.path.splitext(fname)
+                            dst = os.path.join(desired_path, f"{root}__dup{ext}")
+                        shutil.move(src, dst)
+                        moved_any = True
+                try:
+                    os.rmdir(old_path)
+                except OSError:
+                    pass
+
+            print(f"  🧱 normalizada: {desired} (moved_files={moved_any})")
+            already_had_folder += 1
 
         print("\n✅ Sincronización MongoDB → local completada.")
-
-
-# ================== SCRIPT CLI PRINCIPAL ==================
+        print(f"📌 Resumen:")
+        print(f"  - item_ids en Mongo (procesados): {len(mongo_item_ids)}")
+        print(f"  - imágenes escritas: {wrote_images}")
+        print(f"  - docs en Mongo sin imágenes: {empty_docs}")
+        print(f"  - carpetas vacías creadas (Zoho activos no en Mongo): {created_empty}")
+        print(f"  - carpetas ya existentes normalizadas (Zoho activos no en Mongo): {already_had_folder}")
+        if skipped_no_id:
+            print(f"  - items Zoho sin item_id: {skipped_no_id}")
+        
+    
+    # ================== SCRIPT CLI PRINCIPAL ==================
 
 
 

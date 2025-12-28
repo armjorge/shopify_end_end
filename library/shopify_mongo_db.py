@@ -104,7 +104,7 @@ class SHOPIFY_MONGODB:
         _log(msg)
         return None
 
-    def sync_shopify_to_mongo(self, logger=None):
+    def sync_shopify_to_mongo(self, logger=None, needed_endpoints = None):
         """
         Consulta varios endpoints de Shopify (REST Admin API) y los sincroniza en MongoDB.
 
@@ -113,6 +113,7 @@ class SHOPIFY_MONGODB:
         - Cada documento es un renglón único del endpoint, con PK = pk_field (id, inventory_item_id, ...)
         """
 
+
         def _log(msg: str):
             if callable(logger):
                 logger(str(msg))
@@ -120,11 +121,10 @@ class SHOPIFY_MONGODB:
         mongo_db_url = self.data["non_sql_database"]["url"]
         client = MongoClient(mongo_db_url)
 
-        # 👉 Cada tienda es una base de datos
-        db_name = self.store   # "managed_store_one", "managed_store_two"
+        db_name = self.store
         db = client[db_name]
 
-        endpoints = {
+        full_endpoints = {
             "orders": {
                 "pk": "id",
                 "root_key": "orders",
@@ -135,13 +135,36 @@ class SHOPIFY_MONGODB:
                 "root_key": "inventory_levels",
                 "extra_params": {},  # location_ids se resuelven dinámicamente
             },
-
             "products": {
-            "pk": "id",
-            "root_key": "products",
-            "extra_params": {}
-        }}
+                "pk": "id",
+                "root_key": "products",
+                "extra_params": {},
+            },
+        }
 
+        full_keys = list(full_endpoints.keys())
+
+        if needed_endpoints is None:
+            endpoints = full_endpoints
+            chosen_keys = full_keys[:]  # todos
+        else:
+            invalid = [k for k in needed_endpoints if k not in full_endpoints]
+            if invalid:
+                raise ValueError(f"Endpoints inválidos: {invalid}. Válidos: {full_keys}")
+
+            endpoints = {k: full_endpoints[k] for k in needed_endpoints}
+            chosen_keys = list(endpoints.keys())
+
+        removed_keys = [k for k in full_keys if k not in chosen_keys]
+
+        msg = (
+            "🔎 Shopify endpoints | "
+            f"full={full_keys} | "
+            f"chosen={chosen_keys} | "
+            f"removed={removed_keys}"
+        )
+        print(msg)
+        _log(msg)
         summary = {}
 
         for endpoint, conf in endpoints.items():
