@@ -2,7 +2,7 @@ import os
 import re
 import base64
 from io import BytesIO
-from PIL import Image
+from PIL import Image,ImageChops
 from pymongo import MongoClient
 from datetime import datetime
 from colorama import init, Fore, Style
@@ -11,6 +11,7 @@ import yaml
 import sys
 import unicodedata
 import shutil
+
 
 
 class SHOPIFY_IMAGES: 
@@ -113,22 +114,56 @@ class SHOPIFY_IMAGES:
 
         # orden estable (para que merge sea determinista)
         return sorted(out)
-    def resize_image_to_max(self, image_path, max_size=300):
+
+
+    def resize_image_to_max(
+        self,
+        image_path,
+        max_size=2048,
+        object_scale=0.88,          # súbelo si lo ves pequeño (0.85–0.92)
+        bg_color=(255, 255, 255),
+        trim=True,
+        trim_threshold=12           # más alto = recorta menos agresivo
+    ):
         """
-        Abre una imagen, la reescala manteniendo proporción
-        para que el lado más grande sea max_size (px).
-        Retorna (bytes_jpeg, width, height).
+        Shopify-friendly:
+        1) (opcional) recorta bordes “vacíos”/fondo uniforme
+        2) escala el objeto para ocupar ~object_scale del canvas
+        3) centra en canvas max_size x max_size
+        Retorna (bytes_jpeg, width, height)
         """
         img = Image.open(image_path).convert("RGB")
-        img.thumbnail((max_size, max_size), Image.LANCZOS)
+
+        # ---- 1) TRIM de bordes (quita márgenes del fondo) ----
+        if trim:
+            # asumimos que el fondo es el color de la esquina superior izquierda
+            bg = img.getpixel((0, 0))
+            bg_img = Image.new("RGB", img.size, bg)
+            diff = ImageChops.difference(img, bg_img)
+
+            # umbral para ignorar ruido
+            diff = diff.convert("L").point(lambda p: 255 if p > trim_threshold else 0)
+
+            bbox = diff.getbbox()
+            if bbox:
+                img = img.crop(bbox)
+
+        # ---- 2) Escalar para que el objeto quepa en inner ----
+        inner = int(max_size * float(object_scale))
+        img.thumbnail((inner, inner), Image.LANCZOS)
+
+        # ---- 3) Canvas + centrado ----
+        w, h = img.size
+        canvas = Image.new("RGB", (max_size, max_size), bg_color)
+        x = (max_size - w) // 2
+        y = (max_size - h) // 2
+        canvas.paste(img, (x, y))
 
         buffer = BytesIO()
-        img.save(buffer, format="JPEG", quality=85)
+        canvas.save(buffer, format="JPEG", quality=90, optimize=True)
         buffer.seek(0)
 
-        width, height = img.size
-        return buffer.read(), width, height
-
+        return buffer.read(), max_size, max_size    
     def folder_name_to_item_id(self, folder_name: str) -> str | None:
         """
         Extrae el item_id a partir del nombre de la carpeta.
